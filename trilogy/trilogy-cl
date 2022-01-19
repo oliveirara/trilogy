@@ -1,0 +1,33 @@
+from trilogy import trilogy
+import sys
+
+from glob import glob
+from os.path import join
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        infile = "trilogy.in"
+        images = None
+        trilogy.Trilogy(infile, images=images, **trilogy.params_cl()).run()
+    else:  # > 1
+        input1 = sys.argv[1]
+        if ("*" in input1) or ("?" in input1):
+            indir = trilogy.params_cl().get("indir", "")
+            input1 = join(indir, input1)
+            images = glob(input1)
+            for image in images:
+                trilogy.Trilogy(images=image, **trilogy.params_cl()).run()
+        else:
+            images = None
+            if (
+                trilogy.strend(input1, ".fits")
+                or trilogy.strend(input1, ".fits.gz")
+                or trilogy.strend(input1, ".fits.fz")
+            ):
+                images = input1
+                infile = None
+            else:
+                infile = input1
+
+            trilogy.Trilogy(infile, images=images, **trilogy.params_cl()).run()

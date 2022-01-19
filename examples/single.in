@@ -1,0 +1,19 @@
+J120447.2-024312.3_KiDS_DR4.0_181.5_-2.5_i_sci.fits
+
+indir  ./
+outname  J120447.2-024312.3_KiDS_DR4.0_181.5_-2.5_i_sci
+outdir   ./
+samplesize 1000
+stampsize  1000
+showstamps  0
+satpercent  0.1
+noiselum    0.5
+colorsatfac  1
+deletetests  0
+testfirst    1
+show  0
+sampledx  0
+sampledy  0
+legend  0
+deletefilters  1
+
