@@ -8,7 +8,7 @@ R
 hst_mos_1020228_wfc3_uvis_f814w_drz_cutout_20asec.fits[1]
 
 indir  ./
-outname  cosmic_horsehoe
+outname  cosmic_horseshoe
 outdir   ./
 
 satpercent  0.0009
