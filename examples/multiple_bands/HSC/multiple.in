@@ -1,0 +1,31 @@
+B
+J114444.8+001347.0-HSC-G-pdr3_wide.fits[1]
+
+G
+J114444.8+001347.0-HSC-R-pdr3_wide.fits[1]
+
+R
+J114444.8+001347.0-HSC-I-pdr3_wide.fits[1]
+
+indir  ./
+outname  J114444.8+001347.0-HSC-pdr3_wide
+outdir   ./
+samplesize 20000
+stampsize  20000
+maxstampsize 20000
+showstamps  100
+satpercent  0.0009
+noiselum    0.5
+noisesig 50
+noisesig0 10
+correctbias 0
+colorsatfac  1
+combine sum
+deletetests  1
+deletefilters  1
+testfirst    0
+show  0
+sampledx  0
+sampledy  0
+legend  0
+invert 0
