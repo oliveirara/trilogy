@@ -1,12 +1,25 @@
-# Trilogy
+# trilogy
 
-Python script that converts astronomical FITS images into color/grayscale images. [Trilogy](https://www.stsci.edu/~dcoe/trilogy/) was originally written in Python 2.
-
-<a  href="https://ascl.net/1508.009"><img  src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255"  alt="ascl:1508.009" /></a>
+Python script that converts astronomical FITS images into color/grayscale images. [trilogy](https://www.stsci.edu/~dcoe/trilogy/) was originally written in Python 2.
 
 Author: [Dan Coe](https://www.stsci.edu/~dcoe)
 
 Modified by [Renan Alves de Oliveira](https://github.com/oliveirara)
+
+<a  href="https://ascl.net/1508.009"><img  src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255"  alt="ascl:1508.009" /></a>
+
+<p align="center">
+
+  <img width="300" src="https://github.com/oliveirara/trilogy/blob/main/examples/cosmic_horseshoe/cosmic_horseshoe.png" alt="Cosmic Horseshoe" title="Cosmic Horseshoe">
+  <br>
+  <em><strong>Cosmic Horseshoe</strong> image was taken by Hubble WFC3, using filters F475W, F606W, and F814W.
+              <br>We use <b>trilogy</b> to combine all FITS files in this beautiful RGB image!
+              <br>
+              <br>
+  </em>
+</p>
+
+
 
 ## Installation
 
