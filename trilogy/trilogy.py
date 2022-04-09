@@ -11,6 +11,7 @@ from glob import glob
 from os.path import exists
 from os.path import join
 from PIL import Image
+from IPython.display import display  # to display images
 from PIL import ImageDraw
 from scipy.optimize import golden
 
@@ -110,7 +111,7 @@ class meanstd_robust:
 
 
 def strend(str, phr):
-    return str[-len(phr) :] == phr
+    return str[-len(phr):] == phr
 
 
 def decapfile(name, ext=""):
@@ -252,7 +253,8 @@ def determinescaling(data, unsatpercent, noisesig=1, correctbias=True, noisesig0
         else:
             x0 = 0
         x1 = m + noisesig * r
-        x2 = setlevels(datasorted, np.array([unsatpercent]), sortedalready=True)[0]
+        x2 = setlevels(datasorted, np.array(
+            [unsatpercent]), sortedalready=True)[0]
         levels = x0, x1, x2
     return levels
 
@@ -265,7 +267,7 @@ def setlevels(data, pp, stripneg=False, sortedalready=False):
         vs = np.sort(data.flat)
     if stripneg:  # Get rid of negative values altogether!
         i = np.searchsorted(vs, 0)
-        vs = vs[i + 1 :]
+        vs = vs[i + 1:]
     else:  # Clip negative values to zero
         vs = clip2(vs, 0, None)
     ii = np.array(pp) * len(vs)
@@ -494,7 +496,7 @@ def processimagename(image):
     global imfilts
     if image[-1] == ")":
         i = image.find("(")
-        filt = image[i + 1 : -1]
+        filt = image[i + 1: -1]
         image = image[:i]
         imfilts[image] = filt
     if image[-1] == "]":
@@ -718,7 +720,8 @@ class Trilogy:
                         )
                         for channel in self.mode[::-1]:  # 'BGR'
                             for image in self.imagesRGB[channel]:
-                                data = loadfitsimagedata(image, self.indir, silent=0)
+                                data = loadfitsimagedata(
+                                    image, self.indir, silent=0)
                         raise  # Raise Exception (error) and quit
 
             fout.write(outline + "\n")
@@ -808,7 +811,8 @@ class Trilogy:
                 )
         elif self.combine == "average":
             for ichannel, channel in enumerate(self.mode):
-                stampRGB[ichannel] = stampRGB[ichannel] / len(self.imagesRGB[channel])
+                stampRGB[ichannel] = stampRGB[ichannel] / \
+                    len(self.imagesRGB[channel])
 
         return stampRGB
 
@@ -841,7 +845,8 @@ class Trilogy:
             dy = yhi - ylo
             dx = xhi - xlo
             print(
-                "Determining image scaling based on %dx%d core sample" % (dx, dy),
+                "Determining image scaling based on %dx%d core sample" % (
+                    dx, dy),
             )
             if self.sampledx or self.sampledy:
                 print(
@@ -968,7 +973,8 @@ class Trilogy:
             dy = yhi - ylo
             dx = xhi - xlo
             print(
-                "Determining image scaling based on %dx%d core sample" % (dx, dy),
+                "Determining image scaling based on %dx%d core sample" % (
+                    dx, dy),
             )
 
             if self.sampledx or self.sampledy:
@@ -1113,7 +1119,8 @@ class Trilogy:
                 if self.show and self.showstamps:
                     im.show()
 
-                imfull.paste(im, (xo, self.ny - yo - dy1, xo + dx1, self.ny - yo))
+                imfull.paste(
+                    im, (xo, self.ny - yo - dy1, xo + dx1, self.ny - yo))
 
         outfile = join(self.outdir, self.outfile)
         if self.legend:
@@ -1242,7 +1249,11 @@ class Trilogy:
     def showimage(self, outfile, Image):
         cmd = self.showwith
         if (not cmd) or (cmd.upper() == "PIL"):
-            Image.open(outfile).show()
+            try:
+                Image.open(outfile).show()
+            except:
+                display(Image.open(outfile))
+
         else:
             try:
                 os.system(cmd + " " + outfile)
@@ -1284,7 +1295,6 @@ class Trilogy:
         if self.deletefilters:
            if exists(self.outfilterfile()):
                os.remove(self.outfilterfile())
-
 
 
 if __name__ == "__main__":
