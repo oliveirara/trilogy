@@ -662,10 +662,10 @@ class Trilogy:
             if self.outname:
                 self.outname = os.path.basename(self.outname)
                 self.outname = decapfile(self.outname)
-        if (len(self.outname) > 4) and (self.outname[-4] == "."):
+        if (len(self.outname) > 4) and (self.outname[-4] == ".") and (self.outname[-4] != ".cut"):
             # Has extension
-            self.outfile = self.outname  # Use whatever extension they picked
-            self.outname = self.outname[:-4]  # Remove extension
+            self.outfile = self.outname + ".png" # Use whatever extension they picked
+            # self.outname = self.outname[:-4]  # Remove extension
         else:  # Just root
             self.outfile = self.outname + ".png"
 
