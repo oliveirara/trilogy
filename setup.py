@@ -19,9 +19,13 @@ setup(
     keywords="fits files,astronomical images",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    package_dir={"": "trilogy"},
-    packages=find_packages("trilogy", exclude=["examples"]),
-    scripts=["bin/trilogy-cl"],
+    package_dir={"": "."},
+    packages=find_packages(
+        where="./",
+        include=["./trilogy*"],
+        exclude=["./examples"],
+    ),
+    scripts=["./bin/trilogy-cl"],
     install_requires=[
         "Pillow>=8",
         "astropy>=4",

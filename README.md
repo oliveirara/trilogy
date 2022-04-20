@@ -10,7 +10,7 @@ Modified by [Renan Alves de Oliveira](https://github.com/oliveirara)
 
 <p align="center">
 
-  <img width="300" src="https://github.com/oliveirara/trilogy/blob/main/examples/cosmic_horseshoe/cosmic_horseshoe.png" alt="Cosmic Horseshoe" title="Cosmic Horseshoe">
+  <img width="300" src="https://raw.githubusercontent.com/oliveirara/trilogy/main/examples/cosmic_horseshoe/cosmic_horseshoe.png" alt="Cosmic Horseshoe" title="Cosmic Horseshoe">
   <br>
   <em><strong>Cosmic Horseshoe</strong> image was taken by Hubble WFC3, using filters F475W, F606W, and F814W.
               <br>We use <b>trilogy</b> to combine all FITS files in this beautiful RGB image!

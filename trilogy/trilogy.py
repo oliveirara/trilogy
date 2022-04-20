@@ -1,6 +1,5 @@
 import os
 import sys
-import string
 
 
 import astropy.io.fits as pyfits
@@ -11,8 +10,8 @@ from glob import glob
 from os.path import exists
 from os.path import join
 from PIL import Image
-from IPython.display import display  # to display images
 from PIL import ImageDraw
+from IPython.display import display
 from scipy.optimize import golden
 
 
