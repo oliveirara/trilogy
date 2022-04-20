@@ -2,6 +2,11 @@ name: trilogy
 channels:
   - conda-forge
 dependencies:
+  - Pillow
+  - astropy
+  - numpy
+  - scipy
+  - IPython
   - pip
   - pip:
     - trilogy
