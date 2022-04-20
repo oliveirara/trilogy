@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="trilogy",
-    version="0.0.4",
+    version="0.0.5",
     license="GPLv3",
     author="Dan Coe",
     author_email="dcoe@stsci.edu",
@@ -19,7 +19,7 @@ setup(
     keywords="fits files,astronomical images",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    package_dir={"": "."},
+    package_dir={"": "trilogy"},
     packages=find_packages(
         where="./",
         include=["./trilogy*"],
