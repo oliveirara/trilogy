@@ -1,1 +1,1 @@
-from trilogy import *
+from .trilogy import Trilogy
