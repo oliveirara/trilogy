@@ -1,0 +1,7 @@
+name: trilogy
+channels:
+  - conda-forge
+dependencies:
+  - pip
+  - pip:
+    - trilogy

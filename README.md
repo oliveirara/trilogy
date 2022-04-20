@@ -19,7 +19,7 @@ Modified by [Renan Alves de Oliveira](https://github.com/oliveirara)
   </em>
 </p>
 
-
+Try it! [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/oliveirara/trilogy/HEAD)
 
 ## Installation
 

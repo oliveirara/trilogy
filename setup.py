@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="trilogy",
-    version="0.0.7",
+    version="0.0.8",
     license="GPLv3",
     author="Dan Coe",
     author_email="dcoe@stsci.edu",
