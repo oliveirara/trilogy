@@ -1,19 +1,13 @@
+from glob import glob
 import os
+from os.path import exists, join
 import sys
 
-
 import astropy.io.fits as pyfits
-import numpy as np
-
-
-from glob import glob
-from os.path import exists
-from os.path import join
-from PIL import Image
-from PIL import ImageDraw
 from IPython.display import display
+import numpy as np
+from PIL import Image, ImageDraw
 from scipy.optimize import golden
-
 
 defaultvalues = {
     "indir": "",
@@ -384,7 +378,7 @@ def loadfile(filename, dir="", silent=0, keepnewlines=0):
     infile = join(dir, filename)
     if not silent:
         print("Loading ", infile, "...\n")
-    fin = open(infile, "r")
+    fin = open(infile)
     sin = fin.readlines()
     fin.close()
     if not keepnewlines:
@@ -502,11 +496,7 @@ def processimagename(image):
         image = image[:-3]
     else:
         ext = ""
-    if (
-        not strend(image, "fits")
-        and not strend(image, "fits.gz")
-        and not strend(image, "fits.fz")
-    ):
+    if not strend(image, "fits") and not strend(image, "fits.gz") and not strend(image, "fits.fz"):
         image += ".fits"
     image = image + ext
     return image
@@ -552,7 +542,7 @@ class Trilogy:
 
     def setinparams(self):
         print("From input parameters:")
-        bekeys = "invert ".split()
+        bekeys = ["invert"]
         inkeys = self.inparams.keys()
         for key in inkeys:
             if key in bekeys:
@@ -571,7 +561,7 @@ class Trilogy:
 
     def setdefaults(self):
         print("Default:")
-        for key in defaultvalues.keys():
+        for key in defaultvalues:
             if key not in self.inkeys:
                 val = defaultvalues[key]
                 cmd = "self.%s = val" % key
@@ -660,11 +650,7 @@ class Trilogy:
             if self.outname:
                 self.outname = os.path.basename(self.outname)
                 self.outname = decapfile(self.outname)
-        if (
-            (len(self.outname) > 4)
-            and (self.outname[-4] == ".")
-            and (self.outname[-4] != ".cut")
-        ):
+        if (len(self.outname) > 4) and (self.outname[-4] == ".") and (self.outname[-4] != ".cut"):
             # Has extension
             self.outfile = self.outname + ".png"  # Use whatever extension they picked
             # self.outname = self.outname[:-4]  # Remove extension
@@ -716,10 +702,7 @@ class Trilogy:
                     self.xc = nx / 2
                 else:
                     if (self.ny != ny) or (self.nx != nx):
-                        print(
-                            "Input FAIL.  Your images are not all the same size as (%d,%d)."
-                            % (self.ny, self.nx)
-                        )
+                        print("Input FAIL.  Your images are not all the same size as (%d,%d)." % (self.ny, self.nx))
                         for channel in self.mode[::-1]:  # 'BGR'
                             for image in self.imagesRGB[channel]:
                                 data = loadfitsimagedata(image, self.indir, silent=0)
@@ -788,15 +771,11 @@ class Trilogy:
                     weightimage = image.replace(self.imext, self.weightext)
                     weightfile = join(self.indir, weightimage)
                     if exists(weightfile):
-                        weight = loadfitsimagedata(
-                            weightimage, self.indir, silent=silent
-                        )
+                        weight = loadfitsimagedata(weightimage, self.indir, silent=silent)
                         weightstamp = weight[ylo:yhi, xlo:xhi]
                         # FLAG IMAGE!!  EITHER 1 or 0
                         weightstamp = np.greater(weightstamp, 0)
-                        weightstampRGB[ichannel] = (
-                            weightstampRGB[ichannel] + sgn * weightstamp
-                        )
+                        weightstampRGB[ichannel] = weightstampRGB[ichannel] + sgn * weightstamp
                         stamp = stamp * weightstamp
                     else:
                         print(weightfile, "DOES NOT EXIST")
@@ -829,13 +808,8 @@ class Trilogy:
             self.levdict = {}
 
             if dx * dy == 0:
-                print(
-                    "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-                )
-                print(
-                    "(Note this will be clipped to a maximum of %dx%d.)"
-                    % (self.maxstampsize, self.maxstampsize)
-                )
+                print("By setting samplesize = 0, you have asked to sample the entire image to determine the scalings.")
+                print("(Note this will be clipped to a maximum of %dx%d.)" % (self.maxstampsize, self.maxstampsize))
                 dx = dy = self.maxstampsize  # Maximum size possible
 
             ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
@@ -955,13 +929,8 @@ class Trilogy:
             self.levdict = {}
 
             if dx * dy == 0:
-                print(
-                    "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-                )
-                print(
-                    "(Note this will be clipped to a maximum of %dx%d.)"
-                    % (self.maxstampsize, self.maxstampsize)
-                )
+                print("By setting samplesize = 0, you have asked to sample the entire image to determine the scalings.")
+                print("(Note this will be clipped to a maximum of %dx%d.)" % (self.maxstampsize, self.maxstampsize))
                 dx = dy = self.maxstampsize  # Maximum size possible
 
             ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
@@ -1151,13 +1120,8 @@ class Trilogy:
     def showsample(self, outfile):
         dx = dy = self.samplesize
         if dx * dy == 0:
-            print(
-                "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-            )
-            print(
-                "(Note this will be clipped to a maximum of %dx%d.)"
-                % (self.maxstampsize, self.maxstampsize)
-            )
+            print("By setting samplesize = 0, you have asked to sample the entire image to determine the scalings.")
+            print("(Note this will be clipped to a maximum of %dx%d.)" % (self.maxstampsize, self.maxstampsize))
             dx = dy = self.maxstampsize  # Maximum size possible
 
         ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
@@ -1309,11 +1273,7 @@ if __name__ == "__main__":
                 Trilogy(images=image, **params_cl()).run()
         else:
             images = None
-            if (
-                strend(input1, ".fits")
-                or strend(input1, ".fits.gz")
-                or strend(input1, ".fits.fz")
-            ):
+            if strend(input1, ".fits") or strend(input1, ".fits.gz") or strend(input1, ".fits.fz"):
                 images = input1
                 infile = None
             else:
