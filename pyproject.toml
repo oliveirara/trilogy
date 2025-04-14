@@ -1,0 +1,112 @@
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "trilogy"
+version = "0.2.0"
+description = "Python script that converts astronomical FITS images in color/grayscale images."
+license = { file = "LICENSE" }
+readme = "README.md"
+homepage = "https://github.com/oliveirara/trilogy"
+repository = "https://github.com/oliveirara/trilogy"
+documentation = "https://github.com/oliveirara/trilogy"
+authors = [
+  {name = "Dan Coe", email= "dcoe@stsci.edu"},
+  {name = "Renan Alves de Oliveira", email= "fisica.renan@gmail.com"},
+]
+maintainers = [
+  {name = "Renan Alves de Oliveira", email= "fisica.renan@gmail.com"},
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+]
+keywords = ["fits files", "astronomical images"]
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "astropy>=6.1.7",
+    "ipython>=8.35.0",
+    "numpy>=2.2.4",
+    "pillow>=11.2.1",
+    "scipy>=1.15.2",
+]
+
+[project.scripts]
+trilogy-cl = "trilogy.bin.trilogy_cl:main"
+
+[tool.poetry]
+packages = [
+  {include = "trilogy"}
+]
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
+[tool.ruff.lint.isort]
+known-first-party = ["trilogy"]
+force-sort-within-sections = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = []
+select = [
+    # flake8-2020
+    "YTT",
+    # flake8-bandit
+    "S",
+    # flake8-bugbear
+    "B",
+    # flake8-builtins
+    "A",
+    # flake8-comprehensions
+    "C4",
+    # flake8-debugger
+    "T10",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # mccabe
+    "C90",
+    # pycodestyle
+    "E", "W",
+    # pyflakes
+    "F",
+    # pygrep-hooks
+    "PGH",
+    # pyupgrade
+    "UP",
+    # ruff
+    "RUF",
+    # tryceratops
+    "TRY",
+    # default configurations
+    "E4", "E7", "E9"
+]
+ignore = [
+    # LineTooLong
+    "E501",
+    # DoNotAssignLambda
+    "E731",
+    # Complex
+    "C901",
+    # Avoid specifying long messages outside the exception classcode
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["E402"]
+
+[tool.ruff.format]
+preview = true
+
+[tool.deptry]
+ignore = [
+  # https://deptry.com/rules-violations/#unused-dependencies-dep002
+  "DEP002"
+]
+exclude = [".venv", "docs", "tests"]
