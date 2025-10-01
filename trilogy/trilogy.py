@@ -8,7 +8,6 @@ Uses Lupton's method for image scaling.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -64,7 +63,7 @@ class TrilogyConfig:
 
     # Output options
     legend: bool = False  # Add legend to image
-    
+
     # Auto-adjustment
     auto_adjust: bool = True  # Automatically adjust problematic parameters
 
@@ -103,14 +102,7 @@ def compute_robust_stats(
     data_sorted = data_sorted[~np.isnan(data_sorted)]
 
     if len(data_sorted) == 0 or data_sorted[0] == data_sorted[-1]:
-        return ImageStats(
-            mean=0.0, 
-            std=1.0, 
-            median=0.0, 
-            min_val=0.0, 
-            max_val=0.0,
-            percentile_99=0.0
-        )
+        return ImageStats(mean=0.0, std=1.0, median=0.0, min_val=0.0, max_val=0.0, percentile_99=0.0)
 
     ilo, ihi = 0, len(data_sorted)
 
@@ -137,20 +129,13 @@ def compute_robust_stats(
     mean = float(np.mean(clipped))
     std = float(np.sqrt(np.mean((clipped - mean) ** 2)))
     median = float(np.median(clipped))
-    
+
     # Additional stats for parameter estimation
     min_val = float(data_sorted[0])
     max_val = float(data_sorted[-1])
     percentile_99 = float(data_sorted[int(0.99 * len(data_sorted))])
 
-    return ImageStats(
-        mean=mean, 
-        std=std, 
-        median=median, 
-        min_val=min_val, 
-        max_val=max_val,
-        percentile_99=percentile_99
-    )
+    return ImageStats(mean=mean, std=std, median=median, min_val=min_val, max_val=max_val, percentile_99=percentile_99)
 
 
 def determine_scaling(
@@ -200,27 +185,27 @@ def auto_adjust_parameters(
 ) -> TrilogyConfig:
     """
     Automatically adjust parameters based on data statistics.
-    
+
     This function detects problematic parameter combinations and suggests
     better values while preserving user intent.
-    
+
     Args:
         config: Current configuration
         data_stats: Statistics from the sample data
         channel: Channel being processed
-    
+
     Returns:
         Adjusted configuration
     """
     adjusted = False
-    
+
     # Get current noiselum for this channel
     noiselum = config.noiselums.get(channel, config.noiselum)
-    
+
     # Detect extreme noiselum values that cause numerical issues
     if noiselum > 1.5:
         print(f"  ⚠️  noiselum={noiselum:.2f} is very high, may cause numerical issues")
-        print(f"  ℹ️  Auto-adjusting to noiselum=0.5 for better results")
+        print("  ℹ️  Auto-adjusting to noiselum=0.5 for better results")  # noqa: RUF001
         if config.noiselums:
             config.noiselums[channel] = 0.5
         else:
@@ -229,7 +214,7 @@ def auto_adjust_parameters(
     elif 0.95 < noiselum <= 1.5:
         # Values slightly above 1.0 often cause issues too
         print(f"  ⚠️  noiselum={noiselum:.2f} is close to 1.0, may cause numerical issues")
-        print(f"  ℹ️  Auto-adjusting to noiselum=0.15 for better results")
+        print("  ℹ️  Auto-adjusting to noiselum=0.15 for better results")  # noqa: RUF001
         if config.noiselums:
             config.noiselums[channel] = 0.15
         else:
@@ -237,45 +222,45 @@ def auto_adjust_parameters(
         adjusted = True
     elif noiselum < 0.01:
         print(f"  ⚠️  noiselum={noiselum:.4f} is very low, image may be too bright")
-        print(f"  ℹ️  Auto-adjusting to noiselum=0.15 for better results")
+        print("  ℹ️  Auto-adjusting to noiselum=0.15 for better results")  # noqa: RUF001
         if config.noiselums:
             config.noiselums[channel] = 0.15
         else:
             config.noiselum = 0.15
         adjusted = True
-    
+
     # Detect extreme noisesig values
     if config.noisesig < 0.1:
         print(f"  ⚠️  noisesig={config.noisesig:.3f} is very low")
-        print(f"  ℹ️  Auto-adjusting to noisesig=1.0 for better results")
+        print("  ℹ️  Auto-adjusting to noisesig=1.0 for better results")  # noqa: RUF001
         config.noisesig = 1.0
         adjusted = True
     elif config.noisesig > 100:
         print(f"  ⚠️  noisesig={config.noisesig:.1f} is very high")
-        print(f"  ℹ️  Auto-adjusting to noisesig=50 for better results")
+        print("  ℹ️  Auto-adjusting to noisesig=50 for better results")  # noqa: RUF001
         config.noisesig = 50.0
         adjusted = True
-    
+
     # Detect if data range is very small (all zeros or very uniform)
     data_range = data_stats.max_val - data_stats.min_val
     if data_range < 1e-10:
         print(f"  ⚠️  Data range is extremely small ({data_range:.2e})")
-        print(f"  ℹ️  Image may appear blank - check input data")
+        print("  ℹ️  Image may appear blank - check input data")  # noqa: RUF001
     elif abs(data_stats.mean) < 1e-10 and abs(data_stats.std) < 1e-10:
-        print(f"  ⚠️  Data appears to be all zeros or near-zero")
-        print(f"  ℹ️  Auto-adjusting satpercent for better contrast")
+        print("  ⚠️  Data appears to be all zeros or near-zero")
+        print("  ℹ️  Auto-adjusting satpercent for better contrast")  # noqa: RUF001
         config.satpercent = 0.1  # More aggressive clipping for low-contrast data
         adjusted = True
-    
+
     # Detect very high bscale values (often used incorrectly)
     if config.bscale < 0.001 and config.bscale != 1.0:
         print(f"  ⚠️  bscale={config.bscale:.6f} is very small")
-        print(f"  ℹ️  This will make the image very dark")
-        print(f"  💡 Consider using bscale=1.0 unless intentional")
-    
+        print("  ℹ️  This will make the image very dark")  # noqa: RUF001
+        print("  💡 Consider using bscale=1.0 unless intentional")
+
     if adjusted:
-        print(f"  ✓ Parameters auto-adjusted for optimal results")
-    
+        print("  ✓ Parameters auto-adjusted for optimal results")
+
     return config
 
 
@@ -327,7 +312,7 @@ def scale_image(
     r1 = np.log10(k * (x2 - x0) + 1)
     if r1 <= 0:
         r1 = 1.0  # Avoid division by zero
-    
+
     data_clipped = np.clip(data, 0, None)
     d = k * (data_clipped - x0) + 1
     d = np.clip(d, 1e-30, None)
@@ -357,13 +342,11 @@ def adjust_saturation(rgb: NDArray[np.floating], saturation: float) -> NDArray[n
     k = saturation
     rw, gw, bw = LUMINANCE_WEIGHTS["R"], LUMINANCE_WEIGHTS["G"], LUMINANCE_WEIGHTS["B"]
 
-    sat_matrix = np.array(
-        [
-            [rw * (1 - k) + k, gw * (1 - k), bw * (1 - k)],
-            [rw * (1 - k), gw * (1 - k) + k, bw * (1 - k)],
-            [rw * (1 - k), gw * (1 - k), bw * (1 - k) + k],
-        ]
-    )
+    sat_matrix = np.array([
+        [rw * (1 - k) + k, gw * (1 - k), bw * (1 - k)],
+        [rw * (1 - k), gw * (1 - k) + k, bw * (1 - k)],
+        [rw * (1 - k), gw * (1 - k), bw * (1 - k) + k],
+    ])
 
     # Reshape and apply transformation
     original_shape = rgb.shape
@@ -443,7 +426,7 @@ class Trilogy:
 
     def _process_images(self, images: str | Path | list[str | Path] | dict[str, list[str | Path]]) -> None:
         """Process and categorize input images."""
-        if isinstance(images, (str, Path)):
+        if isinstance(images, str | Path):
             # Single image -> grayscale
             self.images["L"] = [self._normalize_path(images)]
             self.mode = "L"
@@ -506,22 +489,19 @@ class Trilogy:
                         if hdul[i].data is not None:
                             extension = i
                             break
-            
+
             hdu = hdul[extension]
-            
+
             if hdu.data is None:
                 raise ValueError(f"No image data found in {full_path}")
-            
+
             data = hdu.data.astype(np.float64)
 
             # Extract filter information
             filter_name = hdu.header.get("FILTER", "")
             if not filter_name:
                 filter1 = hdu.header.get("FILTER1", "")
-                if filter1 and not filter1.startswith("CLEAR"):
-                    filter_name = filter1
-                else:
-                    filter_name = hdu.header.get("FILTER2", "")
+                filter_name = filter1 if filter1 and not filter1.startswith("CLEAR") else hdu.header.get("FILTER2", "")
 
         return data, filter_name
 
@@ -607,7 +587,7 @@ class Trilogy:
         x0 = max(0, xc - sample_size // 2 + self.config.sampledx)
         x1 = min(nx, xc + sample_size // 2 + self.config.sampledx)
 
-        print(f"Determining scaling from {x1-x0}x{y1-y0} sample region")
+        print(f"Determining scaling from {x1 - x0}x{y1 - y0} sample region")
         if self.config.sampledx or self.config.sampledy:
             print(f"  offset by ({self.config.sampledx}, {self.config.sampledy})")
 
@@ -619,7 +599,7 @@ class Trilogy:
 
             # Get statistics for auto-adjustment
             data_stats = compute_robust_stats(data)
-            
+
             # Auto-adjust parameters if needed (unless disabled by user)
             if self.config.auto_adjust:
                 self.config = auto_adjust_parameters(self.config, data_stats, channel)
@@ -663,7 +643,7 @@ class Trilogy:
         # Load and scale each channel
         scaled = np.zeros((n_channels, ny, nx), dtype=np.uint8)
 
-        noiselums = self.config.noiselums or {ch: self.config.noiselum for ch in self.mode}
+        noiselums = self.config.noiselums or dict.fromkeys(self.mode, self.config.noiselum)
 
         for i, channel in enumerate(self.mode):
             data = self._load_channel_data(channel, yslice, xslice)
@@ -770,4 +750,3 @@ class Trilogy:
             PIL Image
         """
         return self.make_image()
-

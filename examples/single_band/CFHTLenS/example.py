@@ -2,6 +2,7 @@
 """Example: Single band grayscale image from CFHTLenS."""
 
 from pathlib import Path
+
 from trilogy import Trilogy
 
 trilogy = Trilogy(

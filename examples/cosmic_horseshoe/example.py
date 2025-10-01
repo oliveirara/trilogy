@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """Example: Cosmic Horseshoe - RGB image from Hubble WFC3."""
 
-from pathlib import Path
 from trilogy import Trilogy
 
 # RGB composite from three HST filters
