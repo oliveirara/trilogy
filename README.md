@@ -1,21 +1,16 @@
 # trilogy
 
-Python script that converts astronomical FITS images into color/grayscale images. [trilogy](https://www.stsci.edu/~dcoe/trilogy/) was originally written in Python 2.
-
-Author: [Dan Coe](https://www.stsci.edu/~dcoe)
+Python library for converting astronomical FITS images into beautiful color or grayscale images. Originally written by [Dan Coe](https://www.stsci.edu/~dcoe), now refactored and optimized for Python 3.11+.
 
 Modified by [Renan Alves de Oliveira](https://github.com/oliveirara)
 
-<a  href="https://ascl.net/1508.009"><img  src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255"  alt="ascl:1508.009" /></a>
+<a href="https://ascl.net/1508.009"><img src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255" alt="ascl:1508.009" /></a>
 
 <p align="center">
-
   <img width="300" src="https://raw.githubusercontent.com/oliveirara/trilogy/main/examples/cosmic_horseshoe/cosmic_horseshoe.png" alt="Cosmic Horseshoe" title="Cosmic Horseshoe">
   <br>
-  <em><strong>Cosmic Horseshoe</strong> image was taken by Hubble WFC3, using filters F475W, F606W, and F814W.
-              <br>We use <b>trilogy</b> to combine all FITS files in this beautiful RGB image!
-              <br>
-              <br>
+  <em><strong>Cosmic Horseshoe</strong> image taken by Hubble WFC3, using filters F475W, F606W, and F814W.
+              <br>We use <b>trilogy</b> to combine all FITS files into this beautiful RGB image!
   </em>
 </p>
 
@@ -23,86 +18,200 @@ Try it! [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2
 
 ## Installation
 
-1. From **PyPi**:
+### From PyPI:
 
 ```bash
 pip install trilogy
 ```
 
-2. From **Github**:
+### From GitHub:
 
 ```bash
 git clone https://github.com/oliveirara/trilogy.git
 cd trilogy
-python setup.py build
-python setup.py install
+pip install -e .
 ```
 
-## Usage
+## Quick Start
 
-1. Command line:
+### Single Band (Grayscale) Image
 
-```bash
-trilogy-cl -params
+```python
+from trilogy import Trilogy
+
+# Simple single image
+trilogy = Trilogy(
+    images="path/to/image.fits",
+    outname="output",
+    noiselum=0.15,
+    satpercent=0.001
+)
+img = trilogy.run()
+img.show()  # Display image
 ```
 
-2. With input file (e.g. see *.in in ~/examples/):
+### Multi-Band (RGB) Image
 
-```bash
-trilogy-cl single.in
+```python
+from trilogy import Trilogy
+
+# RGB composite from three filters
+images = {
+    "R": ["path/to/red_filter.fits"],
+    "G": ["path/to/green_filter.fits"], 
+    "B": ["path/to/blue_filter.fits"]
+}
+
+trilogy = Trilogy(
+    images=images,
+    outname="rgb_output",
+    noiselum=0.15,
+    satpercent=0.001,
+    colorsatfac=1.5  # Boost color saturation
+)
+img = trilogy.save("output.png")  # Save directly
 ```
 
-3. With input file and command line parameters:
+### Advanced Configuration
 
-```bash
-trilogy-cl single.in -deletefilters 0 -showwith PIL -sampledx 300
+```python
+from trilogy import Trilogy, TrilogyConfig
+from pathlib import Path
+
+# Use configuration dataclass for complex settings
+config = TrilogyConfig(
+    indir=Path("data/fits"),
+    outdir=Path("output"),
+    outname="advanced_image",
+    
+    # Scaling parameters
+    satpercent=0.01,
+    noiselum=0.2,
+    noiselums={"R": 0.2, "G": 0.15, "B": 0.1},  # Per-channel
+    colorsatfac=1.3,
+    
+    # Processing
+    samplesize=2000,
+    stampsize=2000,
+    combine="average",  # or "sum"
+    
+    # Visual
+    invert=False,
+    legend=True  # Add filter legend to image
+)
+
+trilogy = Trilogy(
+    images={
+        "R": ["i_band.fits"],
+        "G": ["r_band.fits"],
+        "B": ["g_band.fits"]
+    },
+    config=config
+)
+
+img = trilogy.make_image()
+img.save("output.png")
 ```
 
-4. Check notebooks in `~/notebooks` for examples.
+## Usage in Notebooks
+
+Trilogy is designed to work seamlessly in Jupyter notebooks:
+
+```python
+from trilogy import Trilogy
+from pathlib import Path
+
+# Process and display inline
+t = Trilogy(
+    images={"R": ["i.fits"], "G": ["r.fits"], "B": ["g.fits"]},
+    outname="notebook_output",
+    noiselum=0.15
+)
+
+# Returns PIL Image that displays automatically in notebooks
+img = t.run()
+```
+
+See `examples/with_notebook/notebook.ipynb` for complete examples.
+
+## Configuration Parameters
+
+### Input/Output
+- `indir`: Input directory (default: current directory)
+- `outdir`: Output directory (default: current directory)  
+- `outname`: Output filename without extension
+
+### Image Scaling
+- `satpercent`: Percentage of pixels to saturate (default: 0.001)
+- `noiselum`: Noise luminosity level 0-1 (default: 0.15)
+- `noiselums`: Per-channel noise luminosity dict
+- `noisesig`: Noise sigma for output (default: 1)
+- `noisesig0`: Noise sigma for measurement (default: 2)
+- `correctbias`: Measure noise mean vs assume 0 (default: False)
+- `colorsatfac`: Color saturation factor, >1 boosts (default: 1)
+
+### Processing
+- `samplesize`: Sample region size for scaling (default: 1000)
+- `sampledx`, `sampledy`: Sample offsets (default: 0)
+- `stampsize`: Processing stamp size (default: 1000)
+- `maxstampsize`: Maximum stamp size (default: 6000)
+- `combine`: "average" or "sum" for multiple images (default: "average")
+- `bscale`: Multiply all image values (default: 1)
+- `bzero`: Add to all image values (default: 0)
+
+### Advanced
+- `noise`: Manual noise level (overrides automatic)
+- `saturate`: Manual saturation level (overrides automatic)
+- `invert`: Invert luminosity (default: False)
+- `legend`: Add filter legend to RGB images (default: False)
+
+## What's New in v1.0
+
+- ✅ **Removed CLI** - Focus on Python/notebook usage
+- ✅ **Modern Python 3.11+** - Type hints, dataclasses, pathlib
+- ✅ **Performance improvements** - Caching, better numpy usage
+- ✅ **Cleaner API** - Simplified interface, better error handling
+- ✅ **No interactive prompts** - Fully scriptable
+- ✅ **Better documentation** - Type-safe and IDE-friendly
 
 ## Requirements
 
-* `Pillow`
-* `astropy`
-* `numpy`
-* `scipy`
+- Python >= 3.11
+- astropy >= 6.1.7
+- numpy >= 2.2.4
+- pillow >= 11.2.1
+- scipy >= 1.15.2
 
-## Parameters and default values
+## Algorithm
 
-```python
-"indir" = ''          # Input directory.
-"outname" = None      # Output filename.
-"outdir" = ''         # Output directory.
-"saturate" = None     # Determined automatically if None: image data value allowed to saturate.
-"satpercent" = 0.001  # Percentage of pixels which will be saturated.
-"colorsatfac" = 1     # \> 1 to boost color saturation.
-"noise" = None        # Noise luminosity is determined automatically if None.
-"noiselum" = 0.15     # Noise luminosity for single channel (between 0 - 1).
-"noiselums" = {}      # Noise luminosity for each channel (between 0 - 1).
-"noisesig" = 1        # Data noise level output to noiselum: measured sigma above the measured mean.
-"noisesig0": 2        # Data noise level: measured sigma above the measured mean.
-"correctbias"= 0      # Measure data noise mean (otherwise assume = 0).
-"combine" = 'average' # "average" or "sum" combine images.
-"invert" =  0         # Invert luminosity (black on white).
-"scaling" = None      # Determined automatically if None: image scaling.
-"bscale" = 1          # Multiply all images by this value.
-"bzero" = 0           # Add this value to all images.
-"samplesize" = 1000   # Determine number of levels.
-"stampsize" = 1000    # Making final color image (memory issue).
-"sampledx" = 0        # Offset in x direction.
-"sampledy" = 0        # Offset in y direction.
-"show" = 0            # Show final image at the end.
-"showstamps" = 0      # Show image config stamps.
-"showwith" = 'open'   # Command to display images.
-"thumbnail" = None    # Show thumbnail.
-"legend" = 0          # Adds legend to top-left corner indicating which filters were used (only for RGB).
-"maxstampsize" = 6000 # Memory fix.
-"testfirst" = 1       # Test some options before making the final image.
-"deletetests" = 0     # Delete testing files.
-"deletefilters" = 1   # Delete filter files.
-```
+Trilogy uses **Lupton's method** for creating color images from astronomical data:
+- Logarithmic scaling for wide dynamic range
+- Robust statistics with sigma clipping
+- Automatic or manual level determination
+- Color saturation adjustment
+- Per-channel noise luminosity control
 
 ## Resources
 
-* [Lupton's method](http://www.astro.princeton.edu/~rhl/PrettyPictures/)
-* [STIFF](https://github.com/astromatic/stiff)
+- [Lupton's method](http://www.astro.princeton.edu/~rhl/PrettyPictures/)
+- [STIFF](https://github.com/astromatic/stiff)
+- [Original trilogy](https://www.stsci.edu/~dcoe/trilogy/)
+
+## Examples
+
+Check the `examples/` directory for sample FITS files and configurations:
+- `cosmic_horseshoe/` - HST WFC3 multi-band example
+- `single_band/` - Single filter examples
+- `multiple_bands/` - Various survey examples (HSC, KIDS, Legacy, etc.)
+- `with_notebook/` - Jupyter notebook examples
+
+## License
+
+See LICENSE file.
+
+## Citation
+
+If you use trilogy in your research, please cite:
+```
+Coe, D. 2012, "Trilogy", Astrophysics Source Code Library, record ascl:1508.009
+```
