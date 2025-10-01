@@ -6,11 +6,11 @@ from trilogy import Trilogy
 trilogy = Trilogy(
     images="J001424.3+004145.3_S82p4p_y.V2.7A.swarp.cut.fits",
     outname="J001424.3+004145.3_S82p4p_y.V2.7A.swarp",
-    # Optimized parameters from manual tuning
-    noiselum=3.0,
+    # Adjusted parameters - noiselum lowered to avoid saturation
+    noiselum=0.15,  # Changed from 3.0 to avoid over-saturation
     satpercent=0.01,
     noisesig=1,
-    noisesig0=0.009,
+    noisesig0=2,
     correctbias=True,
     samplesize=20000,
     stampsize=20000,

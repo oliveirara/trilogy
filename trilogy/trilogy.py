@@ -72,6 +72,10 @@ class ImageStats:
 
     mean: float
     std: float
+    median: float
+    min_val: float
+    max_val: float
+    percentile_99: float
 
 
 def compute_robust_stats(
@@ -96,20 +100,27 @@ def compute_robust_stats(
     data_sorted = data_sorted[~np.isnan(data_sorted)]
 
     if len(data_sorted) == 0 or data_sorted[0] == data_sorted[-1]:
-        return ImageStats(mean=0.0, std=1.0)
+        return ImageStats(
+            mean=0.0, 
+            std=1.0, 
+            median=0.0, 
+            min_val=0.0, 
+            max_val=0.0,
+            percentile_99=0.0
+        )
 
     ilo, ihi = 0, len(data_sorted)
 
     for _ in range(n_iterations):
         subset = data_sorted[ilo:ihi]
         imed = (ilo + ihi) // 2
-        median = data_sorted[imed]
+        median_val = data_sorted[imed]
 
         # Use RMS instead of std for better robustness
-        rms = np.sqrt(np.mean((subset - median) ** 2))
+        rms = np.sqrt(np.mean((subset - median_val) ** 2))
 
-        lo_val = median - n_sigma * rms
-        hi_val = median + n_sigma * rms
+        lo_val = median_val - n_sigma * rms
+        hi_val = median_val + n_sigma * rms
 
         new_ilo = np.searchsorted(data_sorted, lo_val)
         new_ihi = np.searchsorted(data_sorted, hi_val, side="right")
@@ -122,8 +133,21 @@ def compute_robust_stats(
     clipped = data_sorted[ilo:ihi]
     mean = float(np.mean(clipped))
     std = float(np.sqrt(np.mean((clipped - mean) ** 2)))
+    median = float(np.median(clipped))
+    
+    # Additional stats for parameter estimation
+    min_val = float(data_sorted[0])
+    max_val = float(data_sorted[-1])
+    percentile_99 = float(data_sorted[int(0.99 * len(data_sorted))])
 
-    return ImageStats(mean=mean, std=std)
+    return ImageStats(
+        mean=mean, 
+        std=std, 
+        median=median, 
+        min_val=min_val, 
+        max_val=max_val,
+        percentile_99=percentile_99
+    )
 
 
 def determine_scaling(
@@ -164,6 +188,92 @@ def determine_scaling(
     x2 = float(data_sorted[idx])
 
     return (x0, x1, x2)
+
+
+def auto_adjust_parameters(
+    config: TrilogyConfig,
+    data_stats: ImageStats,
+    channel: str = "L",
+) -> TrilogyConfig:
+    """
+    Automatically adjust parameters based on data statistics.
+    
+    This function detects problematic parameter combinations and suggests
+    better values while preserving user intent.
+    
+    Args:
+        config: Current configuration
+        data_stats: Statistics from the sample data
+        channel: Channel being processed
+    
+    Returns:
+        Adjusted configuration
+    """
+    adjusted = False
+    
+    # Get current noiselum for this channel
+    noiselum = config.noiselums.get(channel, config.noiselum)
+    
+    # Detect extreme noiselum values that cause numerical issues
+    if noiselum > 1.5:
+        print(f"  ⚠️  noiselum={noiselum:.2f} is very high, may cause numerical issues")
+        print(f"  ℹ️  Auto-adjusting to noiselum=0.5 for better results")
+        if config.noiselums:
+            config.noiselums[channel] = 0.5
+        else:
+            config.noiselum = 0.5
+        adjusted = True
+    elif 0.95 < noiselum <= 1.5:
+        # Values slightly above 1.0 often cause issues too
+        print(f"  ⚠️  noiselum={noiselum:.2f} is close to 1.0, may cause numerical issues")
+        print(f"  ℹ️  Auto-adjusting to noiselum=0.15 for better results")
+        if config.noiselums:
+            config.noiselums[channel] = 0.15
+        else:
+            config.noiselum = 0.15
+        adjusted = True
+    elif noiselum < 0.01:
+        print(f"  ⚠️  noiselum={noiselum:.4f} is very low, image may be too bright")
+        print(f"  ℹ️  Auto-adjusting to noiselum=0.15 for better results")
+        if config.noiselums:
+            config.noiselums[channel] = 0.15
+        else:
+            config.noiselum = 0.15
+        adjusted = True
+    
+    # Detect extreme noisesig values
+    if config.noisesig < 0.1:
+        print(f"  ⚠️  noisesig={config.noisesig:.3f} is very low")
+        print(f"  ℹ️  Auto-adjusting to noisesig=1.0 for better results")
+        config.noisesig = 1.0
+        adjusted = True
+    elif config.noisesig > 100:
+        print(f"  ⚠️  noisesig={config.noisesig:.1f} is very high")
+        print(f"  ℹ️  Auto-adjusting to noisesig=50 for better results")
+        config.noisesig = 50.0
+        adjusted = True
+    
+    # Detect if data range is very small (all zeros or very uniform)
+    data_range = data_stats.max_val - data_stats.min_val
+    if data_range < 1e-10:
+        print(f"  ⚠️  Data range is extremely small ({data_range:.2e})")
+        print(f"  ℹ️  Image may appear blank - check input data")
+    elif abs(data_stats.mean) < 1e-10 and abs(data_stats.std) < 1e-10:
+        print(f"  ⚠️  Data appears to be all zeros or near-zero")
+        print(f"  ℹ️  Auto-adjusting satpercent for better contrast")
+        config.satpercent = 0.1  # More aggressive clipping for low-contrast data
+        adjusted = True
+    
+    # Detect very high bscale values (often used incorrectly)
+    if config.bscale < 0.001 and config.bscale != 1.0:
+        print(f"  ⚠️  bscale={config.bscale:.6f} is very small")
+        print(f"  ℹ️  This will make the image very dark")
+        print(f"  💡 Consider using bscale=1.0 unless intentional")
+    
+    if adjusted:
+        print(f"  ✓ Parameters auto-adjusted for optimal results")
+    
+    return config
 
 
 def _scaling_objective(k: float, x0: float, x1: float, x2: float, n: float) -> float:
@@ -503,6 +613,12 @@ class Trilogy:
         # Determine levels for each channel
         for channel in self.mode:
             data = self._load_channel_data(channel, slice(y0, y1), slice(x0, x1))
+
+            # Get statistics for auto-adjustment
+            data_stats = compute_robust_stats(data)
+            
+            # Auto-adjust parameters if needed
+            self.config = auto_adjust_parameters(self.config, data_stats, channel)
 
             if self.config.noise is not None and self.config.saturate is not None:
                 # Manual levels

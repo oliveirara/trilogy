@@ -14,13 +14,14 @@ images = {
 trilogy = Trilogy(
     images=images,
     outname="cosmic_horseshoe",
-    # Optimized parameters from manual tuning
-    noiselum=0.0009,
-    satpercent=0.0009,
-    noisesig=0.0009,
-    noisesig0=0.009,
-    correctbias=True,
-    bscale=0.0009,
+    # Corrected parameters - original had bscale too small
+    noiselum=0.10,
+    satpercent=0.0001,
+    noisesig=1,
+    noisesig0=2,
+    correctbias=False,
+    bscale=1.0,  # Fixed: was 0.0009, making image too dark
+    colorsatfac=1.3,  # Boost color saturation
     samplesize=10000,
     stampsize=10000,
     maxstampsize=10000,
