@@ -64,6 +64,9 @@ class TrilogyConfig:
 
     # Output options
     legend: bool = False  # Add legend to image
+    
+    # Auto-adjustment
+    auto_adjust: bool = True  # Automatically adjust problematic parameters
 
 
 @dataclass
@@ -617,8 +620,9 @@ class Trilogy:
             # Get statistics for auto-adjustment
             data_stats = compute_robust_stats(data)
             
-            # Auto-adjust parameters if needed
-            self.config = auto_adjust_parameters(self.config, data_stats, channel)
+            # Auto-adjust parameters if needed (unless disabled by user)
+            if self.config.auto_adjust:
+                self.config = auto_adjust_parameters(self.config, data_stats, channel)
 
             if self.config.noise is not None and self.config.saturate is not None:
                 # Manual levels

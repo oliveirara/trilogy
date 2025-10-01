@@ -1,31 +1,37 @@
 # trilogy
 
-Python library for converting astronomical FITS images into beautiful color or grayscale images. Originally written by [Dan Coe](https://www.stsci.edu/~dcoe), now refactored and optimized for Python 3.11+.
+Modern Python library for converting astronomical FITS images into beautiful color or grayscale images.
 
-Modified by [Renan Alves de Oliveira](https://github.com/oliveirara)
+**Original author:** [Dan Coe](https://www.stsci.edu/~dcoe)  
+**Modernized by:** [Renan Alves de Oliveira](https://github.com/oliveirara)
 
 <a href="https://ascl.net/1508.009"><img src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255" alt="ascl:1508.009" /></a>
 
 <p align="center">
   <img width="300" src="https://raw.githubusercontent.com/oliveirara/trilogy/main/examples/cosmic_horseshoe/cosmic_horseshoe.png" alt="Cosmic Horseshoe" title="Cosmic Horseshoe">
   <br>
-  <em><strong>Cosmic Horseshoe</strong> image taken by Hubble WFC3, using filters F475W, F606W, and F814W.
-              <br>We use <b>trilogy</b> to combine all FITS files into this beautiful RGB image!
+  <em><strong>Cosmic Horseshoe</strong> gravitational lens imaged by Hubble WFC3
+  <br>RGB composite using filters F475W (blue), F606W (green), and F814W (red)
   </em>
 </p>
 
 Try it! [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/oliveirara/trilogy/HEAD)
 
-## Installation
+## Features
 
-### From PyPI:
+✨ **Easy to use** - Simple Python API for creating publication-quality images  
+🎨 **Beautiful results** - Uses Lupton's algorithm for optimal color scaling  
+🚀 **Modern & Fast** - Python 3.11+, type hints, optimized performance  
+🤖 **Smart defaults** - Auto-adjusts problematic parameters automatically  
+📓 **Notebook-friendly** - Works seamlessly in Jupyter notebooks  
+
+## Installation
 
 ```bash
 pip install trilogy
 ```
 
-### From GitHub:
-
+Or from source:
 ```bash
 git clone https://github.com/oliveirara/trilogy.git
 cd trilogy
@@ -34,71 +40,22 @@ pip install -e .
 
 ## Quick Start
 
-### Single Band (Grayscale) Image
+### Grayscale Image (Single Band)
 
 ```python
 from trilogy import Trilogy
 
-# Simple single image
 trilogy = Trilogy(
-    images="path/to/image.fits",
-    outname="output",
-    noiselum=0.15,
-    satpercent=0.001
+    images="galaxy.fits",
+    outname="galaxy"
 )
-img = trilogy.run()
-img.show()  # Display image
+img = trilogy.save()  # Saves galaxy.png
 ```
 
-### Multi-Band (RGB) Image
+### RGB Color Image (Multi-Band)
 
 ```python
 from trilogy import Trilogy
-
-# RGB composite from three filters
-images = {
-    "R": ["path/to/red_filter.fits"],
-    "G": ["path/to/green_filter.fits"], 
-    "B": ["path/to/blue_filter.fits"]
-}
-
-trilogy = Trilogy(
-    images=images,
-    outname="rgb_output",
-    noiselum=0.15,
-    satpercent=0.001,
-    colorsatfac=1.5  # Boost color saturation
-)
-img = trilogy.save("output.png")  # Save directly
-```
-
-### Advanced Configuration
-
-```python
-from trilogy import Trilogy, TrilogyConfig
-from pathlib import Path
-
-# Use configuration dataclass for complex settings
-config = TrilogyConfig(
-    indir=Path("data/fits"),
-    outdir=Path("output"),
-    outname="advanced_image",
-    
-    # Scaling parameters
-    satpercent=0.01,
-    noiselum=0.2,
-    noiselums={"R": 0.2, "G": 0.15, "B": 0.1},  # Per-channel
-    colorsatfac=1.3,
-    
-    # Processing
-    samplesize=2000,
-    stampsize=2000,
-    combine="average",  # or "sum"
-    
-    # Visual
-    invert=False,
-    legend=True  # Add filter legend to image
-)
 
 trilogy = Trilogy(
     images={
@@ -106,73 +63,212 @@ trilogy = Trilogy(
         "G": ["r_band.fits"],
         "B": ["g_band.fits"]
     },
-    config=config
+    outname="galaxy_rgb"
 )
-
-img = trilogy.make_image()
-img.save("output.png")
+img = trilogy.save()  # Saves galaxy_rgb.png
 ```
 
-## Usage in Notebooks
+### Adjusting Brightness and Contrast
 
-Trilogy is designed to work seamlessly in Jupyter notebooks:
+```python
+trilogy = Trilogy(
+    images="galaxy.fits",
+    outname="galaxy_adjusted",
+    noiselum=0.10,      # Lower = darker background (0.05-0.5)
+    satpercent=0.0001   # Lower = less saturation (0.0001-0.01)
+)
+```
+
+### Boosting Colors (RGB)
+
+```python
+trilogy = Trilogy(
+    images={"R": ["r.fits"], "G": ["g.fits"], "B": ["b.fits"]},
+    outname="colorful",
+    colorsatfac=1.5     # >1 boosts colors, <1 reduces
+)
+```
+
+## Key Parameters
+
+### Essential Parameters
+
+| Parameter | Default | Range | Effect |
+|-----------|---------|-------|--------|
+| `noiselum` | 0.15 | 0.05-0.5 | Background brightness (lower = darker) |
+| `satpercent` | 0.001 | 0.0001-0.01 | % of pixels to saturate (lower = more detail) |
+| `colorsatfac` | 1.0 | 0.5-2.0 | Color saturation (RGB only, >1 = more vivid) |
+
+### Common Adjustments
+
+**Image too dark?**
+```python
+noiselum=0.25        # Increase background brightness
+satpercent=0.005     # Allow more saturation
+```
+
+**Image too bright/washed out?**
+```python
+noiselum=0.08        # Decrease background brightness
+satpercent=0.0001    # Preserve more highlights
+```
+
+**Colors too weak?** (RGB only)
+```python
+colorsatfac=1.5      # Boost color saturation
+```
+
+## Advanced Usage
+
+### Per-Channel Control (RGB)
+
+```python
+trilogy = Trilogy(
+    images={"R": [...], "G": [...], "B": [...]},
+    noiselums={
+        "R": 0.20,   # Brighter red channel
+        "G": 0.15,   # Balanced green
+        "B": 0.10    # Darker blue channel
+    }
+)
+```
+
+### Combining Multiple Images
+
+```python
+# Average multiple exposures
+trilogy = Trilogy(
+    images=["exposure1.fits", "exposure2.fits", "exposure3.fits"],
+    combine="average"
+)
+
+# Or sum them
+trilogy = Trilogy(
+    images=["exp1.fits", "exp2.fits"],
+    combine="sum"
+)
+```
+
+### Using Configuration Object
+
+```python
+from trilogy import Trilogy, TrilogyConfig
+
+config = TrilogyConfig(
+    noiselum=0.12,
+    satpercent=0.0005,
+    colorsatfac=1.3,
+    samplesize=2000,
+    combine="average"
+)
+
+trilogy = Trilogy(images=my_images, config=config)
+```
+
+### Manual Control (Disable Auto-Adjustment)
+
+By default, trilogy automatically adjusts problematic parameters. To use exact values:
+
+```python
+trilogy = Trilogy(
+    images="galaxy.fits",
+    noiselum=0.147,      # Will use exactly this value
+    satpercent=0.000823,
+    auto_adjust=False    # Disable auto-adjustment
+)
+```
+
+Use `auto_adjust=False` when:
+- Replicating results from papers/publications
+- You've manually fine-tuned parameters visually
+- You need specific parameter values
+
+## Jupyter Notebooks
+
+Trilogy works seamlessly in notebooks:
 
 ```python
 from trilogy import Trilogy
-from pathlib import Path
 
-# Process and display inline
-t = Trilogy(
-    images={"R": ["i.fits"], "G": ["r.fits"], "B": ["g.fits"]},
-    outname="notebook_output",
-    noiselum=0.15
-)
-
-# Returns PIL Image that displays automatically in notebooks
-img = t.run()
+t = Trilogy(images="galaxy.fits", noiselum=0.15)
+img = t.run()  # Returns PIL Image, displays automatically
 ```
 
 See `examples/with_notebook/notebook.ipynb` for complete examples.
 
-## Configuration Parameters
+## Examples
+
+The `examples/` directory contains real FITS data from various surveys:
+
+- **cosmic_horseshoe/** - HST WFC3 RGB composite
+- **single_band/** - Grayscale examples (CS82, CFHTLenS, DES)
+- **multiple_bands/** - RGB examples (HSC, KIDS, Legacy Survey, RCSLenS)
+- **with_notebook/** - Jupyter notebook examples
+
+Each example includes a `example.py` script you can run:
+```bash
+cd examples/cosmic_horseshoe
+python example.py
+```
+
+## All Parameters
 
 ### Input/Output
-- `indir`: Input directory (default: current directory)
-- `outdir`: Output directory (default: current directory)  
-- `outname`: Output filename without extension
+- `images`: str, list, or dict - Input FITS file(s)
+- `indir`: Path - Input directory (default: current directory)
+- `outdir`: Path - Output directory (default: current directory)
+- `outname`: str - Output filename without extension
 
 ### Image Scaling
-- `satpercent`: Percentage of pixels to saturate (default: 0.001)
-- `noiselum`: Noise luminosity level 0-1 (default: 0.15)
-- `noiselums`: Per-channel noise luminosity dict
-- `noisesig`: Noise sigma for output (default: 1)
-- `noisesig0`: Noise sigma for measurement (default: 2)
-- `correctbias`: Measure noise mean vs assume 0 (default: False)
-- `colorsatfac`: Color saturation factor, >1 boosts (default: 1)
+- `noiselum`: float - Noise luminosity 0-1 (default: 0.15)
+- `noiselums`: dict - Per-channel noise luminosity
+- `satpercent`: float - Percentage of pixels to saturate (default: 0.001)
+- `colorsatfac`: float - Color saturation factor (default: 1.0)
+- `noisesig`: float - Noise sigma for output (default: 1.0)
+- `noisesig0`: float - Noise sigma for measurement (default: 2.0)
+- `correctbias`: bool - Correct for background bias (default: False)
 
 ### Processing
-- `samplesize`: Sample region size for scaling (default: 1000)
-- `sampledx`, `sampledy`: Sample offsets (default: 0)
-- `stampsize`: Processing stamp size (default: 1000)
-- `maxstampsize`: Maximum stamp size (default: 6000)
-- `combine`: "average" or "sum" for multiple images (default: "average")
-- `bscale`: Multiply all image values (default: 1)
-- `bzero`: Add to all image values (default: 0)
+- `combine`: "average" or "sum" - How to combine multiple images (default: "average")
+- `samplesize`: int - Sample region size for determining scaling (default: 1000)
+- `stampsize`: int - Processing stamp size (default: 1000)
+- `maxstampsize`: int - Maximum stamp size (default: 6000)
+- `bscale`: float - Multiply all pixel values (default: 1.0)
+- `bzero`: float - Add to all pixel values (default: 0.0)
 
 ### Advanced
-- `noise`: Manual noise level (overrides automatic)
-- `saturate`: Manual saturation level (overrides automatic)
-- `invert`: Invert luminosity (default: False)
-- `legend`: Add filter legend to RGB images (default: False)
+- `auto_adjust`: bool - Automatically adjust problematic parameters (default: True)
+- `noise`: float - Manual noise level (overrides automatic detection)
+- `saturate`: float - Manual saturation level (overrides automatic)
+- `invert`: bool - Invert luminosity (default: False)
+- `legend`: bool - Add filter legend to RGB images (default: False)
+
+## Supported File Formats
+
+- Standard FITS (`.fits`)
+- Compressed FITS (`.fits.gz`, `.fits.fz`)
+- Multi-extension FITS (specify with `image.fits[1]`)
+- Automatic extension detection
+
+## Algorithm
+
+Trilogy uses **Lupton's algorithm** for astronomical image processing:
+
+1. **Robust Statistics** - Sigma clipping to measure mean and std dev
+2. **Logarithmic Scaling** - Maps wide dynamic range to 0-255
+3. **Color Saturation** - Adjustable color intensity for RGB images
+4. **Smart Defaults** - Automatically adjusts problematic parameters
 
 ## What's New in v1.0
 
-- ✅ **Removed CLI** - Focus on Python/notebook usage
-- ✅ **Modern Python 3.11+** - Type hints, dataclasses, pathlib
-- ✅ **Performance improvements** - Caching, better numpy usage
-- ✅ **Cleaner API** - Simplified interface, better error handling
-- ✅ **No interactive prompts** - Fully scriptable
-- ✅ **Better documentation** - Type-safe and IDE-friendly
+🎉 **Complete rewrite** with modern Python
+
+- ✅ **Python 3.11+** - Type hints, dataclasses, pathlib
+- ✅ **No CLI** - Pure Python/notebook API
+- ✅ **Auto-adjustment** - Automatically fixes problematic parameters
+- ✅ **Performance** - Caching, optimized numpy operations
+- ✅ **Better errors** - Clear error messages and warnings
+- ✅ **Fully scriptable** - No interactive prompts
 
 ## Requirements
 
@@ -182,36 +278,63 @@ See `examples/with_notebook/notebook.ipynb` for complete examples.
 - pillow >= 11.2.1
 - scipy >= 1.15.2
 
-## Algorithm
+## Troubleshooting
 
-Trilogy uses **Lupton's method** for creating color images from astronomical data:
-- Logarithmic scaling for wide dynamic range
-- Robust statistics with sigma clipping
-- Automatic or manual level determination
-- Color saturation adjustment
-- Per-channel noise luminosity control
+### Image is too dark
+```python
+trilogy = Trilogy(images=..., noiselum=0.25, satpercent=0.005)
+```
+
+### Image is too bright/washed out
+```python
+trilogy = Trilogy(images=..., noiselum=0.08, satpercent=0.0001)
+```
+
+### Colors are too weak (RGB)
+```python
+trilogy = Trilogy(images=..., colorsatfac=1.5)
+```
+
+### Getting warnings about parameter adjustments
+The auto-adjustment system is helping you avoid problematic values. To use exact values:
+```python
+trilogy = Trilogy(images=..., your_params, auto_adjust=False)
+```
+
+### Image appears blank/black
+- Check that FITS files have data (not empty)
+- Try increasing `noiselum` and `satpercent`
+- Verify FITS extension if using multi-extension files
 
 ## Resources
 
-- [Lupton's method](http://www.astro.princeton.edu/~rhl/PrettyPictures/)
-- [STIFF](https://github.com/astromatic/stiff)
-- [Original trilogy](https://www.stsci.edu/~dcoe/trilogy/)
+- **Lupton's Algorithm**: http://www.astro.princeton.edu/~rhl/PrettyPictures/
+- **Original Trilogy**: https://www.stsci.edu/~dcoe/trilogy/
+- **ASCL Entry**: https://ascl.net/1508.009
 
-## Examples
+## Citation
 
-Check the `examples/` directory for sample FITS files and configurations:
-- `cosmic_horseshoe/` - HST WFC3 multi-band example
-- `single_band/` - Single filter examples
-- `multiple_bands/` - Various survey examples (HSC, KIDS, Legacy, etc.)
-- `with_notebook/` - Jupyter notebook examples
+If you use trilogy in your research, please cite:
+
+```bibtex
+@MISC{2012ascl.soft08009C,
+  author = {{Coe}, D.},
+  title = "{Trilogy: Image composition software}",
+  keywords = {Software},
+  year = 2012,
+  month = aug,
+  eid = {ascl:1508.009},
+  pages = {ascl:1508.009},
+  archivePrefix = {ascl},
+  eprint = {1508.009},
+  adsurl = {https://ui.adsabs.harvard.edu/abs/2012ascl.soft08009C},
+}
+```
 
 ## License
 
 See LICENSE file.
 
-## Citation
+## Contributing
 
-If you use trilogy in your research, please cite:
-```
-Coe, D. 2012, "Trilogy", Astrophysics Source Code Library, record ascl:1508.009
-```
+Contributions are welcome! Please open an issue or pull request on GitHub.
