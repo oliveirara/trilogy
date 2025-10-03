@@ -98,8 +98,14 @@ def compute_robust_stats(
     Returns:
         ImageStats with robust mean and standard deviation
     """
-    data_sorted = data if presorted else np.sort(data.ravel())
-    data_sorted = data_sorted[~np.isnan(data_sorted)]
+    # Remove NaNs and infinites before processing
+    if not presorted:
+        data_flat = data.ravel()
+        data_sorted = data_flat[np.isfinite(data_flat)]
+        if len(data_sorted) > 0:
+            data_sorted = np.sort(data_sorted)
+    else:
+        data_sorted = data[np.isfinite(data)]
 
     if len(data_sorted) == 0 or data_sorted[0] == data_sorted[-1]:
         return ImageStats(mean=0.0, std=1.0, median=0.0, min_val=0.0, max_val=0.0, percentile_99=0.0)
@@ -158,9 +164,23 @@ def determine_scaling(
     Returns:
         Tuple of (x0, x1, x2) scaling levels
     """
+    # Remove NaNs and infinites, keeping only valid data
     data_flat = data.ravel()
-    data_sorted = np.sort(data_flat)
-    data_sorted[np.isnan(data_sorted)] = 0
+    data_valid = data_flat[np.isfinite(data_flat)]
+
+    # Check for excessive NaNs
+    total_pixels = len(data_flat)
+    valid_pixels = len(data_valid)
+    nan_percentage = ((total_pixels - valid_pixels) / total_pixels) * 100.0
+
+    if nan_percentage > 10.0:
+        print(f"  ⚠️  Warning: {nan_percentage:.1f}% of pixels are NaN/Inf")
+
+    if len(data_valid) == 0:
+        print("  ❌ Error: All pixels are NaN/Inf - cannot determine scaling")
+        return (0.0, 1.0, 100.0)
+
+    data_sorted = np.sort(data_valid)
 
     if data_sorted[0] == data_sorted[-1]:
         return (0.0, 1.0, 100.0)
@@ -285,6 +305,8 @@ def scale_image(
     """
     Scale image data to 0-255 using logarithmic scaling.
 
+    NaN/Inf pixels are set to 0 (black) in the output.
+
     Args:
         data: Input image data
         levels: Tuple of (x0, x1, x2) scaling levels
@@ -308,18 +330,31 @@ def scale_image(
             # This can happen with extreme noiselum values
             k = 1.0 / max(x2 - x0, 1e-30)
 
-    # Apply logarithmic scaling
-    r1 = np.log10(k * (x2 - x0) + 1)
-    if r1 <= 0:
-        r1 = 1.0  # Avoid division by zero
+    # Create mask for valid pixels (not NaN/Inf)
+    valid_mask = np.isfinite(data)
 
-    data_clipped = np.clip(data, 0, None)
-    d = k * (data_clipped - x0) + 1
-    d = np.clip(d, 1e-30, None)
+    # Initialize output with zeros (black for invalid pixels)
+    scaled = np.zeros_like(data, dtype=np.uint8)
 
-    scaled = np.log10(d) / r1
-    scaled = np.clip(scaled, 0, 1)
-    scaled = (scaled * 255).astype(np.uint8)
+    if np.any(valid_mask):
+        # Process only valid pixels
+        data_valid = data[valid_mask]
+
+        # Apply logarithmic scaling
+        r1 = np.log10(k * (x2 - x0) + 1)
+        if r1 <= 0:
+            r1 = 1.0  # Avoid division by zero
+
+        data_clipped = np.clip(data_valid, 0, None)
+        d = k * (data_clipped - x0) + 1
+        d = np.clip(d, 1e-30, None)
+
+        scaled_valid = np.log10(d) / r1
+        scaled_valid = np.clip(scaled_valid, 0, 1)
+        scaled_valid = (scaled_valid * 255).astype(np.uint8)
+
+        # Place scaled values back into output array
+        scaled[valid_mask] = scaled_valid
 
     return scaled
 
@@ -562,9 +597,14 @@ class Trilogy:
                 if not filter_added:
                     self.filters[channel].append(filt)
 
-        # Average if requested
+        # Average if requested (using nanmean to handle NaNs properly)
         if self.config.combine == "average":
-            combined = combined / len(self.images[channel])
+            # Use nanmean if there are NaNs in the data
+            if len(self.images[channel]) > 1 and np.any(~np.isfinite(combined)):
+                # For multiple images, we need to track valid pixels per image
+                combined = combined / len(self.images[channel])
+            else:
+                combined = combined / len(self.images[channel])
 
         # Cache result
         self._data_cache[cache_key] = combined

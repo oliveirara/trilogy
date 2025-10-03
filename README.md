@@ -269,6 +269,7 @@ Trilogy uses **Lupton's algorithm** for astronomical image processing:
 - ✅ **Performance** - Caching, optimized numpy operations
 - ✅ **Better errors** - Clear error messages and warnings
 - ✅ **Fully scriptable** - No interactive prompts
+- ✅ **Smart NaN handling** - Robust processing of images with NaN/Inf pixels
 
 ## Requirements
 
@@ -305,6 +306,31 @@ trilogy = Trilogy(images=..., your_params, auto_adjust=False)
 - Check that FITS files have data (not empty)
 - Try increasing `noiselum` and `satpercent`
 - Verify FITS extension if using multi-extension files
+
+### Images with many NaN pixels
+Trilogy automatically handles NaN (Not a Number) and Inf pixels:
+
+✅ **Smart NaN handling:**
+- NaN/Inf pixels are set to 0 (black) in output
+- Statistics calculated only from valid pixels
+- Warning displayed if >10% of pixels are NaN
+- No crashes or numerical errors from NaN pixels
+
+**Example output:**
+```
+⚠️  Warning: 50.0% of pixels are NaN/Inf
+```
+
+**Recommendation:**
+- Images with >50% NaN pixels will appear mostly black
+- Use quality filtering before processing (e.g., `filter-empty-cutouts.py`)
+- Consider cropping to regions with valid data
+
+**Why NaN pixels occur:**
+- Edge effects from mosaicking/reprojection
+- Missing detector data
+- Masked pixels in processed images
+- Image cutouts extending beyond original field
 
 ## Resources
 
