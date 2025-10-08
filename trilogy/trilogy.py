@@ -758,6 +758,7 @@ class Trilogy:
             img = self._add_legend(img)
 
         print(f"\nSaving to {output_path}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         img.save(output_path)
 
         return output_path

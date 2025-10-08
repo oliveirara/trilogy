@@ -2,12 +2,15 @@
 install: ## Install dependencies using pip and pyenv
 	@echo "🚀 Creating virtual environment using pyenv and uv"
 	@uv venv .venv
+	@uv sync --all-extras --dev
 	@uv run pre-commit install
 
 .PHONY: check
 check: ## Check code quality and dependencies
+	@echo "🚀 Syncing dev environment"
+	@uv sync --all-extras --dev --frozen
 	@echo "🚀 Check uv lock file consistency with 'pyproject.toml'"
-	@uv lock
+	@uv lock --check
 	@echo "🚀 Linting code: Running pre-commit"
 	@uv run pre-commit run -a
 	@echo "🚀 Checking for obsolete dependencies: Running deptry"
