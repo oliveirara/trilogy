@@ -24,9 +24,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Sync dependencies (dev, frozen)
+        run: uv sync --all-extras --dev --frozen
+
       - name: Run checks
         run: make check
-
   tests-and-type-check:
     runs-on: ubuntu-latest
     strategy:
