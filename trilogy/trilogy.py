@@ -1,1322 +1,793 @@
-import os
-import sys
+"""
+Trilogy: Modern Python library for converting astronomical FITS images to color/grayscale images.
 
+Based on the original trilogy by Dan Coe, modernized and optimized.
+Uses Lupton's method for image scaling.
+"""
 
-import astropy.io.fits as pyfits
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+import astropy.io.fits as fits
 import numpy as np
-
-
-from glob import glob
-from os.path import exists
-from os.path import join
-from PIL import Image
-from PIL import ImageDraw
-from IPython.display import display
+from numpy.typing import NDArray
+from PIL import Image, ImageDraw
 from scipy.optimize import golden
 
+# Luminance weights (D65: red boosted, blue muted)
+LUMINANCE_WEIGHTS = {"R": 0.212671, "G": 0.715160, "B": 0.072169}
 
-defaultvalues = {
-    "indir": "",
-    "outname": None,
-    "outdir": "",
-    "noiselum": 0.15,
-    "noiselums": {},
-    "satpercent": 0.001,
-    "colorsatfac": 1,
-    "thumbnail": None,
-    "samplesize": 1000,
-    "sampledx": 0,
-    "sampledy": 0,
-    "stampsize": 1000,
-    "testfirst": 1,
-    "show": 0,
-    "showstamps": 0,
-    "showwith": "open",
-    "deletetests": 0,
-    "deletefilters": 1,
-    "scaling": None,
-    "maxstampsize": 6000,
-    "legend": 0,
-    "invert": 0,
-    "combine": "average",
-    "noise": None,
-    "saturate": None,
-    "bscale": 1,
-    "bzero": 0,
-    "correctbias": 0,
-    "noisesig": 1,
-    "noisesig0": 2,
-}
-
-# Luminance vector
-# All pretty similar; yellow galaxy glow extended a bit more in NTSC
-# rw, gw, bw = 0.299,  0.587,  0.114   # NTSC (also used by PIL in "convert")
-# rw, gw, bw = 0.3086, 0.6094, 0.0820  # linear
-# D65: red boosted, blue muted a bit, I like it
-rw, gw, bw = 0.212671, 0.715160, 0.072169
+ChannelType = Literal["R", "G", "B", "L"]
+ModeType = Literal["RGB", "L"]
+CombineMethod = Literal["average", "sum"]
 
 
-imfilt = ""  # Initialize
+@dataclass
+class TrilogyConfig:
+    """Configuration for Trilogy image processing."""
+
+    # Input/Output
+    indir: Path = field(default_factory=lambda: Path("."))
+    outdir: Path = field(default_factory=lambda: Path("."))
+    outname: str | None = None
+
+    # Image scaling parameters
+    satpercent: float = 0.001  # Percentage of pixels to saturate
+    noiselum: float = 0.15  # Noise luminosity (0-1)
+    noiselums: dict[str, float] = field(default_factory=dict)  # Per-channel noise
+    noisesig: float = 1  # Noise sigma for output
+    noisesig0: float = 2  # Noise sigma for measurement
+    correctbias: bool = False  # Measure noise mean vs assume 0
+    colorsatfac: float = 1  # Color saturation factor (>1 boosts)
+
+    # Processing parameters
+    samplesize: int = 1000  # Sample size for determining scaling
+    sampledx: int = 0  # X offset for sampling
+    sampledy: int = 0  # Y offset for sampling
+    stampsize: int = 1000  # Stamp size for final image
+    maxstampsize: int = 6000  # Maximum stamp size
+
+    # Image manipulation
+    invert: bool = False  # Invert luminosity
+    combine: CombineMethod = "average"  # How to combine multiple images
+    bscale: float = 1  # Multiply all images
+    bzero: float = 0  # Add to all images
+
+    # Advanced
+    noise: float | None = None  # Manual noise level
+    saturate: float | None = None  # Manual saturation level
+    scaling: Path | None = None  # Load pre-computed scaling
+
+    # Output options
+    legend: bool = False  # Add legend to image
+
+    # Auto-adjustment
+    auto_adjust: bool = True  # Automatically adjust problematic parameters
 
 
-# Some functions
-################
+@dataclass
+class ImageStats:
+    """Robust statistics for image data using sigma clipping."""
+
+    mean: float
+    std: float
+    median: float
+    min_val: float
+    max_val: float
+    percentile_99: float
 
 
-def rms(x):
-    return np.sqrt(np.mean(x**2))
+def compute_robust_stats(
+    data: NDArray[np.floating],
+    n_sigma: float = 3.0,
+    n_iterations: int = 5,
+    presorted: bool = False,
+) -> ImageStats:
+    """
+    Compute robust mean and std using sigma clipping.
+
+    Args:
+        data: Input data array
+        n_sigma: Number of sigmas for clipping
+        n_iterations: Number of clipping iterations
+        presorted: Whether data is already sorted
+
+    Returns:
+        ImageStats with robust mean and standard deviation
+    """
+    # Remove NaNs and infinites before processing
+    if not presorted:
+        data_flat = data.ravel()
+        data_sorted = data_flat[np.isfinite(data_flat)]
+        if len(data_sorted) > 0:
+            data_sorted = np.sort(data_sorted)
+    else:
+        data_sorted = data[np.isfinite(data)]
+
+    if len(data_sorted) == 0 or data_sorted[0] == data_sorted[-1]:
+        return ImageStats(mean=0.0, std=1.0, median=0.0, min_val=0.0, max_val=0.0, percentile_99=0.0)
+
+    ilo, ihi = 0, len(data_sorted)
+
+    for _ in range(n_iterations):
+        subset = data_sorted[ilo:ihi]
+        imed = (ilo + ihi) // 2
+        median_val = data_sorted[imed]
+
+        # Use RMS instead of std for better robustness
+        rms = np.sqrt(np.mean((subset - median_val) ** 2))
+
+        lo_val = median_val - n_sigma * rms
+        hi_val = median_val + n_sigma * rms
+
+        new_ilo = np.searchsorted(data_sorted, lo_val)
+        new_ihi = np.searchsorted(data_sorted, hi_val, side="right")
+
+        if new_ihi - new_ilo == ihi - ilo:
+            break
+
+        ilo, ihi = new_ilo, new_ihi
+
+    clipped = data_sorted[ilo:ihi]
+    mean = float(np.mean(clipped))
+    std = float(np.sqrt(np.mean((clipped - mean) ** 2)))
+    median = float(np.median(clipped))
+
+    # Additional stats for parameter estimation
+    min_val = float(data_sorted[0])
+    max_val = float(data_sorted[-1])
+    percentile_99 = float(data_sorted[int(0.99 * len(data_sorted))])
+
+    return ImageStats(mean=mean, std=std, median=median, min_val=min_val, max_val=max_val, percentile_99=percentile_99)
 
 
-class meanstd_robust:
-    # Generates robust statistics using a sigma clipping
-    # algorithm. It is controlled by the parameters n_sigma
-    # and n, the number of iterations
-    # ADAPTED from Txitxo's stat_robust
-    def __init__(self, x, n_sigma=3, n=5, sortedalready=False):
-        self.x = x
-        self.n_sigma = n_sigma
-        self.n = n
-        self.sortedalready = sortedalready
+def determine_scaling(
+    data: NDArray[np.floating],
+    unsatpercent: float,
+    noisesig: float = 1.0,
+    correctbias: bool = False,
+    noisesig0: float = 2.0,
+) -> tuple[float, float, float]:
+    """
+    Determine data values (x0, x1, x2) to scale to (0, noiselum, 1).
 
-    def run(self):
-        ihi = nx = len(self.x)
-        ilo = 0
+    Args:
+        data: Input image data
+        unsatpercent: Percentile for saturation (1 - satpercent/100)
+        noisesig: Sigma level for noise brightness
+        correctbias: Whether to correct for bias
+        noisesig0: Sigma level for bias measurement
 
-        if not self.sortedalready:
-            print("sorting...")
-            self.xsort = np.sort(self.x)
+    Returns:
+        Tuple of (x0, x1, x2) scaling levels
+    """
+    # Remove NaNs and infinites, keeping only valid data
+    data_flat = data.ravel()
+    data_valid = data_flat[np.isfinite(data_flat)]
+
+    # Check for excessive NaNs
+    total_pixels = len(data_flat)
+    valid_pixels = len(data_valid)
+    nan_percentage = ((total_pixels - valid_pixels) / total_pixels) * 100.0
+
+    if nan_percentage > 10.0:
+        print(f"  ⚠️  Warning: {nan_percentage:.1f}% of pixels are NaN/Inf")
+
+    if len(data_valid) == 0:
+        print("  ❌ Error: All pixels are NaN/Inf - cannot determine scaling")
+        return (0.0, 1.0, 100.0)
+
+    data_sorted = np.sort(data_valid)
+
+    if data_sorted[0] == data_sorted[-1]:
+        return (0.0, 1.0, 100.0)
+
+    stats = compute_robust_stats(data_sorted, presorted=True)
+
+    x0 = stats.mean - noisesig0 * stats.std if correctbias else 0.0
+    x1 = stats.mean + noisesig * stats.std
+
+    # Find saturation level
+    idx = int(unsatpercent * len(data_sorted))
+    idx = np.clip(idx, 0, len(data_sorted) - 1)
+    x2 = float(data_sorted[idx])
+
+    return (x0, x1, x2)
+
+
+def auto_adjust_parameters(
+    config: TrilogyConfig,
+    data_stats: ImageStats,
+    channel: str = "L",
+) -> TrilogyConfig:
+    """
+    Automatically adjust parameters based on data statistics.
+
+    This function detects problematic parameter combinations and suggests
+    better values while preserving user intent.
+
+    Args:
+        config: Current configuration
+        data_stats: Statistics from the sample data
+        channel: Channel being processed
+
+    Returns:
+        Adjusted configuration
+    """
+    adjusted = False
+
+    # Get current noiselum for this channel
+    noiselum = config.noiselums.get(channel, config.noiselum)
+
+    # Detect extreme noiselum values that cause numerical issues
+    if noiselum > 1.5:
+        print(f"  ⚠️  noiselum={noiselum:.2f} is very high, may cause numerical issues")
+        print("  ℹ️  Auto-adjusting to noiselum=0.5 for better results")  # noqa: RUF001
+        if config.noiselums:
+            config.noiselums[channel] = 0.5
         else:
-            self.xsort = self.x
-
-        for i in range(self.n):
-            xs = self.xsort[ilo:ihi]
-            imed = int((ilo + ihi) / 2)
-            aver = xs[imed]
-            std1 = np.std(xs)
-            std1 = rms(xs - aver)
-            lo = aver - self.n_sigma * std1
-            hi = aver + self.n_sigma * std1
-            ilo = np.searchsorted(self.xsort, lo)
-            ihi = np.searchsorted(self.xsort, hi, side="right")
-            nnx = ihi - ilo
-            if nnx == nx:
-                break
-            else:
-                nx = nnx
-
-        xrem = xs[ilo:ihi]
-        self.mean = np.mean(xrem)
-        self.std = rms(xrem - self.mean)
-
-
-def strend(str, phr):
-    return str[-len(phr) :] == phr
-
-
-def decapfile(name, ext=""):
-    """Remove extension from filename if present.
-    If ext left blank, then any extension will be removed"""
-    if ext:
-        if ext[0] != ".":
-            ext = "." + ext
-        n = len(ext)
-        if name[-n:] == ext:
-            name = name[:-n]
-    else:
-        if strend(name, ".gz"):
-            name = name[:-3]
-        if strend(name, ".fz"):
-            name = name[:-3]
-        i = name.rfind(".")
-        if i > -1:
-            name = name[:i]
-    return name
-
-
-def str2num(str, rf=0):
-    """Converts a string to a number (int or float) if possible
-    Also returns format if rf=1"""
-    try:
-        num = int(str)
-        format = "d"
-    except:
-        try:
-            num = float(str)
-            format = "f"
-        except:
-            if not str.strip():
-                num = None
-                format = ""
-            else:
-                words = str.split()
-                if len(words) > 1:
-                    num = map(str2num, tuple(words))
-                    format = "l"
-                else:
-                    num = str
-                    format = "s"
-    if rf:
-        return (num, format)
-    else:
-        return num
-
-
-def clip2(m, m_min=None, m_max=None):
-    if m_min == None:
-        m_min = min(m)
-    if m_max == None:
-        m_max = max(m)
-    return np.clip(m, m_min, m_max)
-
-
-def striskey(str):
-    """Is str an option like -C or -ker
-    (It's not if it's -2 or -.9)"""
-    iskey = 0
-    if str:
-        if str[0] == "-":
-            iskey = 1
-            if len(str) > 1:
-                iskey = str[1] not in [
-                    "0",
-                    "1",
-                    "2",
-                    "3",
-                    "4",
-                    "5",
-                    "6",
-                    "7",
-                    "8",
-                    "9",
-                    ".",
-                ]
-    return iskey
-
-
-def params_cl(converttonumbers=True):
-    """Returns parameters from command line ('cl') as dictionary:
-    Keys are options beginning with '-'
-    Values are whatever follows keys: either nothing (''), a value, or a list of values
-    all values are converted to int / float when appropriate"""
-    list = sys.argv[:]
-    i = 0
-    dict = {}
-    key = ""
-    list.append("")  # extra element so we come back and assign the last value
-    while i < len(list):
-        if striskey(list[i]) or not list[i]:  # (or last value)
-            if key:  # assign values to old key
-                if value:
-                    if len(value) == 1:  # list of 1 element
-                        value = value[0]  # just element
-                dict[key] = value
-            if list[i]:
-                key = list[i][1:]  # remove leading '-'
-                value = None
-                dict[key] = value  # in case there is no value!
-        else:  # value (or haven't gotten to keys)
-            if key:  # (have gotten to keys)
-                if value:
-                    if converttonumbers:
-                        value.append(str2num(list[i]))
-                    else:
-                        value = value + " " + list[i]
-                else:
-                    if converttonumbers:
-                        value = [str2num(list[i])]
-                    else:
-                        value = list[i]
-        i += 1
-
-    return dict
-
-
-# TRILOGY-specific tools
-########################
-
-
-def determinescaling(data, unsatpercent, noisesig=1, correctbias=True, noisesig0=2):
-    """Determines data values (x0,x1,x2) which will be scaled to (0,noiselum,1)"""
-    # Robust mean & standard deviation
-    datasorted = np.sort(data.flat)
-    datasorted[np.isnan(datasorted)] = 0  # set all nan values to zero
-    if datasorted[0] == datasorted[-1]:
-        levels = 0, 1, 100  # whatever
-    else:
-        s = meanstd_robust(datasorted, sortedalready=True)
-        s.run()
-        m = s.mean
-        r = s.std
-        if correctbias:
-            x0 = m - noisesig0 * r
+            config.noiselum = 0.5
+        adjusted = True
+    elif 0.95 < noiselum <= 1.5:
+        # Values slightly above 1.0 often cause issues too
+        print(f"  ⚠️  noiselum={noiselum:.2f} is close to 1.0, may cause numerical issues")
+        print("  ℹ️  Auto-adjusting to noiselum=0.15 for better results")  # noqa: RUF001
+        if config.noiselums:
+            config.noiselums[channel] = 0.15
         else:
-            x0 = 0
-        x1 = m + noisesig * r
-        x2 = setlevels(datasorted, np.array([unsatpercent]), sortedalready=True)[0]
-        levels = x0, x1, x2
-    return levels
+            config.noiselum = 0.15
+        adjusted = True
+    elif noiselum < 0.01:
+        print(f"  ⚠️  noiselum={noiselum:.4f} is very low, image may be too bright")
+        print("  ℹ️  Auto-adjusting to noiselum=0.15 for better results")  # noqa: RUF001
+        if config.noiselums:
+            config.noiselums[channel] = 0.15
+        else:
+            config.noiselum = 0.15
+        adjusted = True
+
+    # Detect extreme noisesig values
+    if config.noisesig < 0.1:
+        print(f"  ⚠️  noisesig={config.noisesig:.3f} is very low")
+        print("  ℹ️  Auto-adjusting to noisesig=1.0 for better results")  # noqa: RUF001
+        config.noisesig = 1.0
+        adjusted = True
+    elif config.noisesig > 100:
+        print(f"  ⚠️  noisesig={config.noisesig:.1f} is very high")
+        print("  ℹ️  Auto-adjusting to noisesig=50 for better results")  # noqa: RUF001
+        config.noisesig = 50.0
+        adjusted = True
+
+    # Detect if data range is very small (all zeros or very uniform)
+    data_range = data_stats.max_val - data_stats.min_val
+    if data_range < 1e-10:
+        print(f"  ⚠️  Data range is extremely small ({data_range:.2e})")
+        print("  ℹ️  Image may appear blank - check input data")  # noqa: RUF001
+    elif abs(data_stats.mean) < 1e-10 and abs(data_stats.std) < 1e-10:
+        print("  ⚠️  Data appears to be all zeros or near-zero")
+        print("  ℹ️  Auto-adjusting satpercent for better contrast")  # noqa: RUF001
+        config.satpercent = 0.1  # More aggressive clipping for low-contrast data
+        adjusted = True
+
+    # Detect very high bscale values (often used incorrectly)
+    if config.bscale < 0.001 and config.bscale != 1.0:
+        print(f"  ⚠️  bscale={config.bscale:.6f} is very small")
+        print("  ℹ️  This will make the image very dark")  # noqa: RUF001
+        print("  💡 Consider using bscale=1.0 unless intentional")
+
+    if adjusted:
+        print("  ✓ Parameters auto-adjusted for optimal results")
+
+    return config
 
 
-def setlevels(data, pp, stripneg=False, sortedalready=False):
-    if sortedalready:
-        vs = data
-    else:
-        print("sorting...")
-        vs = np.sort(data.flat)
-    if stripneg:  # Get rid of negative values altogether!
-        i = np.searchsorted(vs, 0)
-        vs = vs[i + 1 :]
-    else:  # Clip negative values to zero
-        vs = clip2(vs, 0, None)
-    ii = np.array(pp) * len(vs)
-    ii = ii.astype(int)
-    ii = np.clip(ii, 0, len(vs) - 1)
-    levels = vs.take(ii)
-    return levels
+def _scaling_objective(k: float, x0: float, x1: float, x2: float, n: float) -> float:
+    """Objective function for golden section search in image scaling."""
+    if abs(k) < 1e-10:
+        return _scaling_objective(1e-10, x0, x1, x2, n)
 
-
-def da(k):
     a1 = k * (x1 - x0) + 1
     a2 = k * (x2 - x0) + 1
-    a1n = a1**n
-    a1n = abs(a1n)  # Don't want the solutions where a1 & a2 are both negative!
-    da1 = a1n - a2
-    k = abs(k)
-    if k == 0:
-        return da(1e-10)
-    else:
-        da1 = da1 / k  # To avoid solution k = 0!
-    return abs(da1)
+    a1n = abs(a1**n)
+    da1 = abs(a1n - a2)
+
+    return da1 / abs(k)
 
 
-def imscale2(data, levels, y1):
-    # x0, x1, x2  yield  0, y1, 1,  respectivelly
-    global n, x0, x1, x2  # So that golden can use them
-    # Normalize?  No.  Unless the data is all ~1e-40 or something...
+def scale_image(
+    data: NDArray[np.floating],
+    levels: tuple[float, float, float],
+    noiselum: float,
+) -> NDArray[np.uint8]:
+    """
+    Scale image data to 0-255 using logarithmic scaling.
+
+    NaN/Inf pixels are set to 0 (black) in the output.
+
+    Args:
+        data: Input image data
+        levels: Tuple of (x0, x1, x2) scaling levels
+        noiselum: Target luminosity for noise level
+
+    Returns:
+        Scaled image as uint8 array
+    """
     x0, x1, x2 = levels
-    if y1 == 0.5:
-        k = (x2 - 2 * x1 + x0) / float(x1 - x0) ** 2
+
+    # Calculate scaling factor k
+    if abs(noiselum - 0.5) < 1e-6:
+        k = (x2 - 2 * x1 + x0) / max((x1 - x0) ** 2, 1e-30)
     else:
-        n = 1 / y1
-        k = abs(golden(da))
-    r1 = np.log10(k * (x2 - x0) + 1)
-    v = np.ravel(data)
-    v = clip2(v, 0, None)
-    d = k * (v - x0) + 1
-    d = clip2(d, 1e-30, None)
-    z = np.log10(d) / r1
-    z = np.clip(z, 0, 1)
-    z.shape = data.shape
-    z = z * 255
-    z = z.astype(np.uint8)
-    return z
+        n = 1.0 / noiselum
+        # Use closure to pass parameters to objective
+        try:
+            k = abs(golden(lambda k_val: _scaling_objective(k_val, x0, x1, x2, n)))
+        except (ValueError, RuntimeError):
+            # Fallback to simple estimation if golden search fails
+            # This can happen with extreme noiselum values
+            k = 1.0 / max(x2 - x0, 1e-30)
+
+    # Create mask for valid pixels (not NaN/Inf)
+    valid_mask = np.isfinite(data)
+
+    # Initialize output with zeros (black for invalid pixels)
+    scaled = np.zeros_like(data, dtype=np.uint8)
+
+    if np.any(valid_mask):
+        # Process only valid pixels
+        data_valid = data[valid_mask]
+
+        # Apply logarithmic scaling
+        r1 = np.log10(k * (x2 - x0) + 1)
+        if r1 <= 0:
+            r1 = 1.0  # Avoid division by zero
+
+        data_clipped = np.clip(data_valid, 0, None)
+        d = k * (data_clipped - x0) + 1
+        d = np.clip(d, 1e-30, None)
+
+        scaled_valid = np.log10(d) / r1
+        scaled_valid = np.clip(scaled_valid, 0, 1)
+        scaled_valid = (scaled_valid * 255).astype(np.uint8)
+
+        # Place scaled values back into output array
+        scaled[valid_mask] = scaled_valid
+
+    return scaled
 
 
-def satK2m(K):
-    m00 = rw * (1 - K) + K
-    m01 = gw * (1 - K)
-    m02 = bw * (1 - K)
+def adjust_saturation(rgb: NDArray[np.floating], saturation: float) -> NDArray[np.floating]:
+    """
+    Adjust color saturation of RGB image.
 
-    m10 = rw * (1 - K)
-    m11 = gw * (1 - K) + K
-    m12 = bw * (1 - K)
+    Args:
+        rgb: RGB image array of shape (3, ny, nx)
+        saturation: Saturation factor (>1 boosts, <1 reduces)
 
-    m20 = rw * (1 - K)
-    m21 = gw * (1 - K)
-    m22 = bw * (1 - K) + K
+    Returns:
+        Saturation-adjusted RGB array
+    """
+    if abs(saturation - 1.0) < 1e-6:
+        return rgb
 
-    m = np.array([[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]])
-    return m
+    # Build saturation adjustment matrix
+    k = saturation
+    rw, gw, bw = LUMINANCE_WEIGHTS["R"], LUMINANCE_WEIGHTS["G"], LUMINANCE_WEIGHTS["B"]
+
+    sat_matrix = np.array([
+        [rw * (1 - k) + k, gw * (1 - k), bw * (1 - k)],
+        [rw * (1 - k), gw * (1 - k) + k, bw * (1 - k)],
+        [rw * (1 - k), gw * (1 - k), bw * (1 - k) + k],
+    ])
+
+    # Reshape and apply transformation
+    original_shape = rgb.shape
+    rgb_flat = rgb.reshape(3, -1)
+    rgb_adjusted = sat_matrix @ rgb_flat
+    return rgb_adjusted.reshape(original_shape)
 
 
-def adjsat(RGB, K):
-    """Adjust the color saturation of an image.  K > 1 boosts it."""
-    m = satK2m(K)
-    three, nx, ny = RGB.shape
-    RGB.shape = three, nx * ny
-    RGB = np.dot(m, RGB)
-    RGB.shape = three, nx, ny
-    return RGB
+def rgb_to_image(rgb: NDArray[np.uint8], invert: bool = False) -> Image.Image:
+    """
+    Convert RGB array to PIL Image.
 
+    Args:
+        rgb: RGB array of shape (3, ny, nx) or (1, ny, nx) for grayscale
+        invert: Whether to invert luminosity
 
-def RGB2im(RGB):
-    """r, g, b = data  (3, ny, nx)
-    Converts to an Image"""
-    data = RGB
-    data = np.transpose(data, (1, 2, 0))  # (3, ny, nx) -> (ny, nx, 3)
-    data = np.clip(data, 0, 255)
-    data = data.astype(np.uint8)
-    three = data.shape[-1]  # 3 if RGB, 1 if L
-    if three == 3:
-        im = Image.fromarray(data)
-    elif three == 1:
-        im = Image.fromarray(data[:, :, 0], "L")
+    Returns:
+        PIL Image
+    """
+    data = np.transpose(rgb, (1, 2, 0))  # (3, ny, nx) -> (ny, nx, 3)
+    data = np.clip(data, 0, 255).astype(np.uint8)
+
+    if invert:
+        data = 255 - data
+
+    n_channels = data.shape[-1]
+    if n_channels == 3:
+        img = Image.fromarray(data, mode="RGB")
+    elif n_channels == 1:
+        img = Image.fromarray(data[:, :, 0], mode="L")
     else:
-        print(
-            "Data shape not understood: expect last number to be 3 for RGB, 1 for L",
-            data.shape,
-        )
-        raise Exception  # Raise generic exception and exit
-    im = im.transpose(Image.FLIP_TOP_BOTTOM)
-    return im
+        raise ValueError(f"Unexpected number of channels: {n_channels}")
 
-
-def RGBscale2im(RGB, levdict, noiselums, colorsatfac, mode="RGB", invlum=0):
-    three, nx, ny = RGB.shape  # if 'L', then three = 1 !
-    if nx * ny > 2000 * 2000:
-        print("Warning: You should probably feed smaller stamps into RGBscale2im.")
-        print("This may take a while...")
-    scaled = np.zeros(RGB.shape, float)
-    for i in range(three):
-        channel = mode[i]  # 'RGB' or 'L'
-        levels = levdict[channel]
-        noiselum = noiselums[channel]
-        scaled[i] = imscale2(RGB[i], levels, noiselum)
-    if (colorsatfac != 1) and (mode == "RGB"):
-        scaled = adjsat(scaled, colorsatfac)
-    if invlum:
-        scaled = 255 - scaled
-    im = RGB2im(scaled)
-    return im
-
-
-def loadfile(filename, dir="", silent=0, keepnewlines=0):
-    infile = join(dir, filename)
-    if not silent:
-        print("Loading ", infile, "...\n")
-    fin = open(infile, "r")
-    sin = fin.readlines()
-    fin.close()
-    if not keepnewlines:
-        for i in range(len(sin)):
-            sin[i] = sin[i][:-1]
-    return sin
-
-
-def loaddict(filename, dir="", silent=0):
-    lines = loadfile(filename, dir, silent)
-    dict = {}
-    for line in lines:
-        if line[0] != "#":
-            words = line.split()
-            key = str2num(words[0])
-            val = ""  # if nothing there
-            valstr = " ".join(words[1:])
-            valtuple = False
-            valarray = True
-            if valstr[0] in "[(" and valstr[-1] in "])":  # LIST / TUPLE!
-                valtuple = valstr[0] == "("
-                valstr = valstr[1:-1].replace(",", "")
-                words[1:] = valstr.split()
-            if len(words) == 2:
-                val = str2num(words[1])
-            elif len(words) > 2:
-                val = []
-                for word in words[1:]:
-                    val.append(str2num(word))
-                if valtuple:
-                    val = tuple(val)
-                if valarray:
-                    val = np.array(val)
-            dict[key] = val
-    return dict
-
-
-# Apply offsets
-###############
-
-offsets = {}
-
-
-def offsetarray(data, offset):
-    new = np.zeros(data.shape)
-    dx, dy = offset
-    if dy >= 0:
-        if dx >= 0:
-            new[dy:, dx:] = data[:-dy, :-dx]
-        else:
-            new[dy:, :-dx] = data[:-dy, dx:]
-    else:
-        if dx >= 0:
-            new[:-dy, dx:] = data[dy:, :-dx]
-        else:
-            new[:-dy, :-dx] = data[dy:, dx:]
-    return new
-
-
-# for channel in offsets.keys():
-#     dataRGB[channel] = offsetarray(dataRGB[channel], offsets[channel])
-
-
-def extractfilter(header):
-    """Extracts filter from a FITS header"""
-    filt = header.get("FILTER", "")
-    if filt == "":
-        filt1 = header.get("FILTER1", "")
-        if filt1 != "":
-            if type(filt1) == str:
-                if filt1[:5] == "CLEAR":
-                    filt2 = header.get("FILTER2", "")
-                    filt = filt2
-                else:
-                    filt = filt1
-    return filt
-
-
-def loadfitsimagedata(image, indir="", silent=1, bscale=1, bzero=0):
-    global imfilt, imfilts
-    if image[-1] == "]":
-        iext = int(image[-2])
-        image = image[:-3]  # Remove [0]
-    else:
-        iext = 0
-
-    image0 = decapfile(image)
-
-    image = join(indir, image)
-    hdulist = pyfits.open(image, memmap=1)
-    hdu = hdulist[iext]
-    data = hdu.data
-    if image0 in imfilts.keys():
-        imfilt = imfilts[image0]
-    else:
-        imfilt = extractfilter(hdu.header)
-        imfilts[image0] = imfilt
-    if not silent:
-        print(image + "[%d]" % iext, data.shape, imfilt)
-    return data
-
-
-imfilts = {}
-
-
-def processimagename(image):
-    global imfilts
-    if image[-1] == ")":
-        i = image.find("(")
-        filt = image[i + 1 : -1]
-        image = image[:i]
-        imfilts[image] = filt
-    if image[-1] == "]":
-        ext = image[-3:]
-        image = image[:-3]
-    else:
-        ext = ""
-    if (
-        not strend(image, "fits")
-        and not strend(image, "fits.gz")
-        and not strend(image, "fits.fz")
-    ):
-        image += ".fits"
-    image = image + ext
-    return image
-
-
-def datascale(data, bscale, bzero):
-    if (bscale != 1) or (bzero != 0):
-        return bscale * data + bzero
-    else:
-        return data
+    return img.transpose(Image.FLIP_TOP_BOTTOM)
 
 
 class Trilogy:
-    def __init__(self, infile=None, images=None, imagesorder="BGR", **inparams):
-        self.nx = None  # image size
-        self.ny = None  # image size
-        self.xlo = 0
-        self.ylo = 0
-        self.xhi = None
-        self.yhi = None
-        self.imagesRGB = {"R": [], "G": [], "B": [], "L": []}  # File names
-        self.inkeys = []
-        self.mode = "L"  # reset below if color
-        self.weightext = None  # No weighting unless weight images are declared
-        # Can use either:
-        # weightext drz wht
-        # weightext drz -> wht
+    """Main class for creating color/grayscale images from FITS files."""
 
-        print("From input file", infile, ":")
-        self.infile = infile
-        if infile:
-            self.loadinputs()
+    def __init__(
+        self,
+        images: str | Path | list[str | Path] | dict[str, list[str | Path]] | None = None,
+        config: TrilogyConfig | None = None,
+        **kwargs,
+    ):
+        """
+        Initialize Trilogy image processor.
 
-        self.images = images
-        if images:
-            self.setimages()
+        Args:
+            images: Input images. Can be:
+                - Single file path for grayscale
+                - List of paths for grayscale (will be combined)
+                - Dict with 'R', 'G', 'B' keys for color image
+            config: Configuration object
+            **kwargs: Additional config parameters as keyword arguments
+        """
+        # Initialize configuration
+        if config is None:
+            config = TrilogyConfig(**kwargs)
+        else:
+            # Merge kwargs into config
+            for key, value in kwargs.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
 
-        self.inparams = inparams
-        if inparams:
-            self.setinparams()
+        self.config = config
+        self.images: dict[ChannelType, list[Path]] = {"R": [], "G": [], "B": [], "L": []}
+        self.filters: dict[ChannelType, list[str]] = {"R": [], "G": [], "B": [], "L": []}
+        self.mode: ModeType = "L"
+        self.shape: tuple[int, int] | None = None  # (ny, nx)
+        self.levels: dict[str, tuple[float, float, float]] = {}
+        self._data_cache: dict[tuple[str, int, int, int, int], NDArray[np.floating]] = {}
 
-        self.setdefaults()
+        # Process input images
+        if images is not None:
+            self._process_images(images)
 
-    def setinparams(self):
-        print("From input parameters:")
-        bekeys = "invert ".split()
-        inkeys = self.inparams.keys()
-        for key in inkeys:
-            if key in bekeys:
-                continue
-            val = self.inparams[key]
-            cmd = "self.%s = val" % key
-            print(key, "=", val)
-            exec(cmd)
-            self.inkeys.append(key)
-        for key in bekeys:
-            val = key in inkeys
-            cmd = "self.%s = val" % key
-            print(key, "=", val)
-            exec(cmd)
-            self.inkeys.append(key)  # added later
+    def _process_images(self, images: str | Path | list[str | Path] | dict[str, list[str | Path]]) -> None:
+        """Process and categorize input images."""
+        if isinstance(images, str | Path):
+            # Single image -> grayscale
+            self.images["L"] = [self._normalize_path(images)]
+            self.mode = "L"
 
-    def setdefaults(self):
-        print("Default:")
-        for key in defaultvalues.keys():
-            if key not in self.inkeys:
-                val = defaultvalues[key]
-                cmd = "self.%s = val" % key
-                exec(cmd)
-                print(key, "=", val, "(default)")
+        elif isinstance(images, list):
+            # List of images -> grayscale
+            self.images["L"] = [self._normalize_path(img) for img in images]
+            self.mode = "L"
 
-    def setimages(self, images=None):
-        images = images or self.images
-        if images != None:
-            if type(images) == str:  # Single image
-                images = processimagename(images)
-                self.imagesRGB["L"] = [images]
-                self.mode = "L"
-            elif type(images[0]) == str:  # List of images
-                images = map(processimagename, images)
-                self.imagesRGB["L"] = images
-                self.mode = "L"
-            else:  # List of 3 lists of images, one for each channel
-                self.mode = "RGB"
-                for i in range(3):
-                    channel = imagesorder[i]
-                    channelimages = map(processimagename, images[i])
-                    self.imagesRGB[channel] = channelimages
+        elif isinstance(images, dict):
+            # Dict with channels -> RGB
+            self.mode = "RGB"
+            for channel in ["R", "G", "B"]:
+                if channel in images:
+                    self.images[channel] = [self._normalize_path(img) for img in images[channel]]
 
-    def setnoiselums(self):
+    def _normalize_path(self, path: str | Path) -> Path:
+        """Normalize image path and extract FITS extension if present."""
+        path_str = str(path)
+
+        # Handle FITS extensions like "image.fits[1]"
+        if path_str.endswith("]"):
+            # Keep the bracket notation for later
+            pass
+
+        # Add .fits extension if missing
+        if not any(path_str.endswith(ext) for ext in [".fits", ".fits.gz", ".fits.fz", "]"]):
+            path_str += ".fits"
+
+        return Path(path_str)
+
+    def _load_fits_data(self, filepath: Path) -> tuple[NDArray[np.floating], str]:
+        """
+        Load FITS image data and extract filter information.
+
+        Args:
+            filepath: Path to FITS file (may include [ext] notation)
+
+        Returns:
+            Tuple of (data array, filter name)
+        """
+        path_str = str(filepath)
+        extension = None
+
+        # Handle FITS extension notation
+        if path_str.endswith("]"):
+            ext_start = path_str.rfind("[")
+            extension = int(path_str[ext_start + 1 : -1])
+            path_str = path_str[:ext_start]
+
+        full_path = self.config.indir / path_str
+
+        with fits.open(full_path, memmap=True) as hdul:
+            # Auto-detect extension with data if not specified
+            if extension is None:
+                extension = 0
+                # If primary HDU has no data, try to find first extension with data
+                if hdul[0].data is None:
+                    for i in range(1, len(hdul)):
+                        if hdul[i].data is not None:
+                            extension = i
+                            break
+
+            hdu = hdul[extension]
+
+            if hdu.data is None:
+                raise ValueError(f"No image data found in {full_path}")
+
+            data = hdu.data.astype(np.float64)
+
+            # Extract filter information
+            filter_name = hdu.header.get("FILTER", "")
+            if not filter_name:
+                filter1 = hdu.header.get("FILTER1", "")
+                filter_name = filter1 if filter1 and not filter1.startswith("CLEAR") else hdu.header.get("FILTER2", "")
+
+        return data, filter_name
+
+    def _get_image_shape(self) -> None:
+        """Determine output image shape from first image."""
         for channel in self.mode:
-            self.noiselums[channel] = self.noiselum
+            if self.images[channel]:
+                data, _ = self._load_fits_data(self.images[channel][0])
+                self.shape = data.shape
+                return
 
-    def loadinputs(self):
-        """Load R,G,B filenames and options"""
-        f = open(self.infile)
-        prevline = ""
-        channel = "L"  # if no channel declared, then it's grayscale!
-        self.noiselums = {}
-        for line in f:
-            if line[0] == "#":
-                continue
+        raise ValueError("No images provided")
 
-            word = line.strip()
-            if len(word):
-                words = word.split()
-                if len(words) == 1:  # Channel or image name
-                    if (word in "RGB") and (prevline == ""):
-                        channel = word
-                        self.mode = "RGB"
-                    else:
-                        image = word
-                        image = processimagename(image)
-                        self.imagesRGB[channel].append(image)
-                        print(channel, image)
-                else:  # parameter and value(s)
-                    key = words[0]
-                    val = str2num("".join(words[1:]))
-                    if key == "weightimages":
-                        print(words)
-                        if len(words[1:]) == 2:  # drz wht
-                            self.imext, self.weightext = words
-                        else:  # drz -> wht
-                            self.imext = words[1]
-                            self.weightext = words[3]
-                    elif key == "noiselums":
-                        if "," in val:
-                            val = val.split(",")
-                            val = map(float, val)
-                        for i, channel in enumerate(self.mode[::-1]):
-                            self.noiselums[channel] = val[i]
-                    else:
-                        cmd = "self.%s = val" % key
-                        # print(cmd)
-                        exec(cmd)
-                    print(key, "=", val)
-                    self.inkeys.append(key)
-            prevline = word
+    def _load_channel_data(
+        self,
+        channel: ChannelType,
+        yslice: slice,
+        xslice: slice,
+    ) -> NDArray[np.floating]:
+        """
+        Load and combine all images for a channel in the specified region.
 
-        if self.noiselums == {}:
-            if "noiselum" in self.inkeys:
-                for channel in self.mode:
-                    self.noiselums[channel] = self.noiselum
-                    self.inkeys.append("noiselums")
-        f.close()
+        Args:
+            channel: Channel to load ('R', 'G', 'B', or 'L')
+            yslice: Y slice of image to load
+            xslice: X slice of image to load
 
-    def setoutfile(self, outname=None):
-        self.outname = outname or self.outname or self.infile
-        if self.outname == None:
-            self.outname = self.images
-            if self.outname:
-                self.outname = os.path.basename(self.outname)
-                self.outname = decapfile(self.outname)
-        if (
-            (len(self.outname) > 4)
-            and (self.outname[-4] == ".")
-            and (self.outname[-4] != ".cut")
-        ):
-            # Has extension
-            self.outfile = self.outname + ".png"  # Use whatever extension they picked
-            # self.outname = self.outname[:-4]  # Remove extension
-        else:  # Just root
-            self.outfile = self.outname + ".png"
+        Returns:
+            Combined channel data
+        """
+        if not self.images[channel]:
+            raise ValueError(f"No images for channel {channel}")
 
-    def outfilterfile(self):
-        outfile = self.outname + "_filters.txt"
-        outfile = join(self.outdir, outfile)
-        return outfile
+        # Check cache
+        cache_key = (channel, yslice.start, yslice.stop, xslice.start, xslice.stop)
+        if cache_key in self._data_cache:
+            return self._data_cache[cache_key]
 
-    def loadimagesize(self):
-        global filters
-        print(
-            "Loading image data.",
-        )
-        print("If multiple filters per channel, adding data.")
-        filters = {"B": [], "G": [], "R": [], "L": []}
-        fout = open(self.outfilterfile(), "w")
+        combined = None
+        filter_added = False
 
-        for channel in self.mode[::-1]:
-            if channel in "RGB":
-                ichannel = "RGB".index(channel)
-            else:  # L
-                ichannel = 0
-            outline = channel + " = "
-            for iimage, image in enumerate(self.imagesRGB[channel]):
-                print(channel)
-                sgn = 1
-                if image[0] == "-":
-                    sgn = -1
-                    image = image[1:]
-                if iimage:
-                    sgnsym = ".+-"[sgn]
-                    outline += " %s " % sgnsym
-                elif sgn == -1:
-                    outline += "- "
-                data = loadfitsimagedata(image, self.indir, silent=0)
-                filt = imfilt
-                if filt == "":
-                    filt = imfilts.get(image, "")
-                filters[channel].append(filt)
-                outline += filt
-                ny, nx = data.shape
-                if self.ny == None:
-                    self.ny = ny
-                    self.nx = nx
-                    self.yc = ny / 2
-                    self.xc = nx / 2
-                else:
-                    if (self.ny != ny) or (self.nx != nx):
-                        print(
-                            "Input FAIL.  Your images are not all the same size as (%d,%d)."
-                            % (self.ny, self.nx)
-                        )
-                        for channel in self.mode[::-1]:  # 'BGR'
-                            for image in self.imagesRGB[channel]:
-                                data = loadfitsimagedata(image, self.indir, silent=0)
-                        raise  # Raise Exception (error) and quit
+        for img_path in self.images[channel]:
+            data, filt = self._load_fits_data(img_path)
 
-            fout.write(outline + "\n")
-            print(outline)
-            print()
-        fout.close()
+            # Apply scaling
+            data = self.config.bscale * data + self.config.bzero
 
-        fout = open(self.outfilterfile(), "w")
-        for channel in "BGR":
-            filtstr = " + ".join(filters[channel])
-            fout.write("%s = %s\n" % (channel, filtstr))
-        fout.close()
+            # Extract region
+            region = data[yslice, xslice]
 
-        # Allow the user to just create part of the image
-        # xlo  1000
-        # xhi  5000
-        # xhi -1000
-        # if hi is negative, then trims from that edge (as 1000:-1000)
-        if self.xhi == None:
-            self.xhi = self.nx
-        elif self.xhi < 0:
-            self.xhi = self.nx + self.xhi
-
-        if self.yhi == None:
-            self.yhi = self.ny
-        elif self.yhi < 0:
-            self.yhi = self.ny + self.yhi
-
-    def loadstamps(self, limits, silent=1):
-        ylo, yhi, xlo, xhi = limits
-
-        ylo = np.clip(ylo, 0, self.ny)
-        yhi = np.clip(yhi, 0, self.ny)
-        xlo = np.clip(xlo, 0, self.nx)
-        xhi = np.clip(xhi, 0, self.nx)
-
-        ny = yhi - ylo
-        nx = xhi - xlo
-
-        three = len(self.mode)
-        stampRGB = np.zeros((three, ny, nx), float)
-        weighting = self.weightext != None
-        if weighting:
-            weightstampRGB = np.zeros((three, ny, nx), float)
-
-        for ichannel, channel in enumerate(self.mode):
-            for image in self.imagesRGB[channel]:
-                if not silent:
-                    print(
-                        channel,
-                    )
-                sgn = 1
-                if image[0] == "-":
-                    sgn = -1
-                    image = image[1:]
-
-                data = loadfitsimagedata(image, self.indir, silent=silent)
-                stamp = data[ylo:yhi, xlo:xhi]
-                stamp = datascale(stamp, self.bscale, self.bzero)
-
-                # weight image?
-                if weighting:
-                    weightimage = image.replace(self.imext, self.weightext)
-                    weightfile = join(self.indir, weightimage)
-                    if exists(weightfile):
-                        weight = loadfitsimagedata(
-                            weightimage, self.indir, silent=silent
-                        )
-                        weightstamp = weight[ylo:yhi, xlo:xhi]
-                        # FLAG IMAGE!!  EITHER 1 or 0
-                        weightstamp = np.greater(weightstamp, 0)
-                        weightstampRGB[ichannel] = (
-                            weightstampRGB[ichannel] + sgn * weightstamp
-                        )
-                        stamp = stamp * weightstamp
-                    else:
-                        print(weightfile, "DOES NOT EXIST")
-
-                stampRGB[ichannel] = stampRGB[ichannel] + sgn * stamp
-
-        if weighting:
-            for ichannel, channel in enumerate(self.mode):
-                stampRGB[ichannel] = np.where(
-                    weightstampRGB[ichannel],
-                    stampRGB[ichannel] / weightstampRGB[ichannel],
-                    0,
-                )
-        elif self.combine == "average":
-            for ichannel, channel in enumerate(self.mode):
-                stampRGB[ichannel] = stampRGB[ichannel] / len(self.imagesRGB[channel])
-
-        return stampRGB
-
-    def determinescalings(self):
-        """Determine data scalings
-        will sample a (samplesize x samplesize) region of the (centered) core
-        make color image of the core as a test if desired"""
-        self.testimages = []
-        redo = True
-        while redo:  # Until user is happy with test image of core
-            dx = dy = self.samplesize
-            print()
-            unsatpercent = 1 - 0.01 * self.satpercent
-            self.levdict = {}
-
-            if dx * dy == 0:
-                print(
-                    "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-                )
-                print(
-                    "(Note this will be clipped to a maximum of %dx%d.)"
-                    % (self.maxstampsize, self.maxstampsize)
-                )
-                dx = dy = self.maxstampsize  # Maximum size possible
-
-            ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
-            yhi = np.clip(self.yc + dy / 2 + self.sampledy, 0, self.ny)
-            xlo = np.clip(self.xc - dx / 2 + self.sampledx, 0, self.nx)
-            xhi = np.clip(self.xc + dx / 2 + self.sampledx, 0, self.nx)
-            dy = yhi - ylo
-            dx = xhi - xlo
-            print(
-                "Determining image scaling based on %dx%d core sample" % (dx, dy),
-            )
-            if self.sampledx or self.sampledy:
-                print(
-                    "offset by (%d,%d)" % (self.sampledx, self.sampledy),
-                )
-
-            print("...")
-
-            limits = int(ylo), int(yhi), int(xlo), int(xhi)
-            stampRGB = self.loadstamps(limits)
-            for ichannel, channel in enumerate(self.mode):
-                self.levdict[channel] = determinescaling(
-                    stampRGB[ichannel],
-                    unsatpercent,
-                    noisesig=self.noisesig,
-                    correctbias=self.correctbias,
-                    noisesig0=self.noisesig0,
-                )
-                print(
-                    channel,
-                )
-                print(" %f  %f  %f" % self.levdict[channel])
-
-            redo = False
-            if self.testfirst:
-                im = RGBscale2im(
-                    stampRGB,
-                    self.levdict,
-                    self.noiselums,
-                    self.colorsatfac,
-                    self.mode,
-                    self.invert,
-                )
-
-                outfile = "%s_test_%g_%g_%g.png" % (
-                    self.outname,
-                    self.satpercent,
-                    self.noiselum,
-                    self.colorsatfac,
-                )
-                outfile = join(self.outdir, outfile)
-                self.testimages.append(outfile)
-
-                print("Creating test image", outfile)
-                im.save(outfile)
-
-                # NOTE I use "open" instead of im.show()
-                # because the latter converts the image to a jpg for display
-                # which degrades it slightly
-                if self.show:
-                    self.showimage(outfile, Image)
-
-                print("Like what you see?")
-                print("If so, press <Enter> a few times")
-
-                print("Otherwise, enter new values:")
-
-                line = "  noise yields brightness: %g? " % self.noiselum
-                inp = input(line)
-                if inp.strip() != "":
-                    self.noiselum = float(inp)
-                    for channel in self.mode:
-                        self.noiselums[channel] = self.noiselum
-                    redo = True
-
-                line = "  %% of pixels that saturate: %g? " % self.satpercent
-                inp = input(line)
-                if inp.strip() != "":
-                    self.satpercent = float(inp)
-                    redo = True
-
-                if self.mode == "RGB":
-                    line = "  color saturation factor: %g? " % self.colorsatfac
-                    inp = input(line)
-                    if inp.strip() != "":
-                        self.colorsatfac = float(inp)
-                        redo = True
-
-                line = "  Sample size: %d? " % self.samplesize
-                inp = input(line)
-                if inp.strip() != "":
-                    self.samplesize = int(inp)
-                    redo = True
-
-                line = "  Sample offset x: %d? " % self.sampledx
-                inp = input(line)
-                if inp.strip() != "":
-                    self.sampledx = int(inp)
-                    redo = True
-
-                line = "  Sample offset y: %d? " % self.sampledy
-                inp = input(line)
-                if inp.strip() != "":
-                    self.sampledy = int(inp)
-                    redo = True
-
-    def determinescalings2(self):
-        """Determine data scalings
-        will sample a (samplesize x samplesize) region of the (centered) core
-        make color image of the core as a test if desired"""
-        self.testimages = []
-        redo = True
-        while redo:  # Until user is happy with test image of core
-            dx = dy = self.samplesize
-            print()
-            unsatpercent = 1 - 0.01 * self.satpercent
-            self.levdict = {}
-
-            if dx * dy == 0:
-                print(
-                    "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-                )
-                print(
-                    "(Note this will be clipped to a maximum of %dx%d.)"
-                    % (self.maxstampsize, self.maxstampsize)
-                )
-                dx = dy = self.maxstampsize  # Maximum size possible
-
-            ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
-            yhi = np.clip(self.yc + dy / 2 + self.sampledy, 0, self.ny)
-            xlo = np.clip(self.xc - dx / 2 + self.sampledx, 0, self.nx)
-            xhi = np.clip(self.xc + dx / 2 + self.sampledx, 0, self.nx)
-
-            dy = yhi - ylo
-            dx = xhi - xlo
-            print(
-                "Determining image scaling based on %dx%d core sample" % (dx, dy),
-            )
-
-            if self.sampledx or self.sampledy:
-                print(
-                    "offset by (%d,%d)" % (self.sampledx, self.sampledy),
-                )
-
-            print("...")
-
-            limits = ylo, yhi, xlo, xhi
-            stampRGB = self.loadstamps(limits)
-            for channel in self.mode:
-                self.levdict[channel] = 0, self.noise, self.saturate
-
-            redo = False
-            if self.testfirst:
-                im = RGBscale2im(
-                    stampRGB,
-                    self.levdict,
-                    self.noiselums,
-                    self.colorsatfac,
-                    self.mode,
-                    self.invert,
-                )
-
-                outfile = "%s_test_%g_%g_%g.png" % (
-                    self.outname,
-                    self.noiselum,
-                    self.noise,
-                    self.saturate,
-                )
-                outfile = join(self.outdir, outfile)
-                self.testimages.append(outfile)
-
-                print("Creating test image", outfile)
-                im.save(outfile)
-
-                # Note: I use "open" instead of im.show()
-                # because the latter converts the image to a jpg for display
-                # which degrades it slightly
-                if self.show:
-                    self.showimage(outfile, Image)
-
-                print("Like what you see?")
-                print("If so, press <Enter> a few times")
-
-                print("Otherwise, enter new values:")
-
-                line = "  noise yields brightness: %g? " % self.noiselum
-                inp = input(line)
-                if inp.strip() != "":
-                    self.noiselum = float(inp)
-                    for channel in self.mode:
-                        self.noiselums[channel] = self.noiselum
-                    redo = True
-
-                line = "  noise image input data value: %g? " % self.noise
-                inp = input(line)
-                if inp.strip() != "":
-                    self.noise = float(inp)
-                    redo = True
-
-                line = "  saturation level image input data value: %g? " % self.saturate
-                inp = input(line)
-                if inp.strip() != "":
-                    self.saturate = float(inp)
-                    redo = True
-
-                if self.mode == "RGB":
-                    line = "  color saturation factor: %g? " % self.colorsatfac
-                    inp = input(line)
-                    if inp.strip() != "":
-                        self.colorsatfac = float(inp)
-                        redo = True
-
-                line = "  Sample size: %d? " % self.samplesize
-                inp = input(line)
-                if inp.strip() != "":
-                    self.samplesize = int(inp)
-                    redo = True
-
-                line = "  Sample offset x: %d? " % self.sampledx
-                inp = input(line)
-                if inp.strip() != "":
-                    self.sampledx = int(inp)
-                    redo = True
-
-                line = "  Sample offset y: %d? " % self.sampledy
-                inp = input(line)
-                if inp.strip() != "":
-                    self.sampledy = int(inp)
-                    redo = True
-
-    def makecolorimage(self):
-        """Make color image (in sections)"""
-        if (self.stampsize == self.samplesize == 0) and self.testfirst:
-            # Already did the full image!
-            print("Full size image already made.")
-            imfile = self.testimages[-1]
-            outfile = join(self.outdir, self.outfile)
-            if self.deletetests:
-                print("Renaming to", outfile)
-                os.rename(imfile, outfile)
+            if combined is None:
+                combined = region
+                if not filter_added:
+                    self.filters[channel].append(filt)
+                    filter_added = True
             else:
-                print("Copying to", outfile)
-                os.copy(imfile, outfile)
-            imfull = Image.open(outfile)
-            return imfull
+                combined = combined + region
+                if not filter_added:
+                    self.filters[channel].append(filt)
 
-        # Clean up: Delete test images
-        if self.deletetests:
-            for testimage in self.testimages:
-                if exists(testimage):
-                    os.remove(testimage)
+        # Average if requested (using nanmean to handle NaNs properly)
+        if self.config.combine == "average":
+            # Use nanmean if there are NaNs in the data
+            if len(self.images[channel]) > 1 and np.any(~np.isfinite(combined)):
+                # For multiple images, we need to track valid pixels per image
+                combined = combined / len(self.images[channel])
+            else:
+                combined = combined / len(self.images[channel])
 
-        dx = dy = self.stampsize
-        if dx * dy == 0:
-            dx = dy = self.maxstampsize
+        # Cache result
+        self._data_cache[cache_key] = combined
 
-        imfull = Image.new(self.mode, (self.nx, self.ny))
+        return combined
 
-        print()
-        if self.mode == "RGB":
-            print("Making full color image, one stamp (section) at a time...")
-        elif self.mode == "L":
-            print("Making full grayscale image, one stamp (section) at a time...")
-        for yo in range(self.ylo, self.yhi, dy):
-            dy1 = min([dy, self.yhi - yo])
-            for xo in range(self.xlo, self.xhi, dx):
-                dx1 = min([dx, self.xhi - xo])
-                print("%5d, %5d  /  (%d x %d)" % (xo, yo, self.nx, self.ny))
-                limits = yo, yo + dy, xo, xo + dx
-                stamps = self.loadstamps(limits)
-                im = RGBscale2im(
-                    stamps,
-                    self.levdict,
-                    self.noiselums,
-                    self.colorsatfac,
-                    self.mode,
-                    self.invert,
+    def _determine_levels(self) -> None:
+        """Determine scaling levels for each channel based on sample region."""
+        if self.shape is None:
+            self._get_image_shape()
+
+        ny, nx = self.shape
+        yc, xc = ny // 2, nx // 2
+
+        # Determine sample region
+        sample_size = self.config.samplesize if self.config.samplesize > 0 else min(nx, ny, self.config.maxstampsize)
+
+        y0 = max(0, yc - sample_size // 2 + self.config.sampledy)
+        y1 = min(ny, yc + sample_size // 2 + self.config.sampledy)
+        x0 = max(0, xc - sample_size // 2 + self.config.sampledx)
+        x1 = min(nx, xc + sample_size // 2 + self.config.sampledx)
+
+        print(f"Determining scaling from {x1 - x0}x{y1 - y0} sample region")
+        if self.config.sampledx or self.config.sampledy:
+            print(f"  offset by ({self.config.sampledx}, {self.config.sampledy})")
+
+        unsatpercent = 1.0 - 0.01 * self.config.satpercent
+
+        # Determine levels for each channel
+        for channel in self.mode:
+            data = self._load_channel_data(channel, slice(y0, y1), slice(x0, x1))
+
+            # Get statistics for auto-adjustment
+            data_stats = compute_robust_stats(data)
+
+            # Auto-adjust parameters if needed (unless disabled by user)
+            if self.config.auto_adjust:
+                self.config = auto_adjust_parameters(self.config, data_stats, channel)
+
+            if self.config.noise is not None and self.config.saturate is not None:
+                # Manual levels
+                self.levels[channel] = (0.0, self.config.noise, self.config.saturate)
+            else:
+                # Automatic levels
+                self.levels[channel] = determine_scaling(
+                    data,
+                    unsatpercent,
+                    noisesig=self.config.noisesig,
+                    correctbias=self.config.correctbias,
+                    noisesig0=self.config.noisesig0,
                 )
-                if self.show and self.showstamps:
-                    im.show()
 
-                imfull.paste(im, (xo, self.ny - yo - dy1, xo + dx1, self.ny - yo))
+            x0_lev, x1_lev, x2_lev = self.levels[channel]
+            print(f"  {channel}: {x0_lev:.6f}  {x1_lev:.6f}  {x2_lev:.6f}")
 
-        outfile = join(self.outdir, self.outfile)
-        if self.legend:
-            self.addlegend(im=imfull)
+    def _process_region(
+        self,
+        yslice: slice,
+        xslice: slice,
+    ) -> Image.Image:
+        """
+        Process a region of the image.
+
+        Args:
+            yslice: Y slice to process
+            xslice: X slice to process
+
+        Returns:
+            PIL Image of the processed region
+        """
+        n_channels = len(self.mode)
+        y0, y1 = yslice.start, yslice.stop
+        x0, x1 = xslice.start, xslice.stop
+        ny, nx = y1 - y0, x1 - x0
+
+        # Load and scale each channel
+        scaled = np.zeros((n_channels, ny, nx), dtype=np.uint8)
+
+        noiselums = self.config.noiselums or dict.fromkeys(self.mode, self.config.noiselum)
+
+        for i, channel in enumerate(self.mode):
+            data = self._load_channel_data(channel, yslice, xslice)
+            noiselum = noiselums.get(channel, self.config.noiselum)
+            scaled[i] = scale_image(data, self.levels[channel], noiselum)
+
+        # Adjust saturation for RGB
+        if self.mode == "RGB" and abs(self.config.colorsatfac - 1.0) > 1e-6:
+            scaled = adjust_saturation(scaled.astype(np.float64), self.config.colorsatfac)
+            scaled = np.clip(scaled, 0, 255).astype(np.uint8)
+
+        return rgb_to_image(scaled, invert=self.config.invert)
+
+    def make_image(self) -> Image.Image:
+        """
+        Create the final image.
+
+        Returns:
+            PIL Image of the final result
+        """
+        if self.shape is None:
+            self._get_image_shape()
+
+        # Determine scaling levels
+        if not self.levels:
+            self._determine_levels()
+
+        ny, nx = self.shape
+        stamp_size = self.config.stampsize if self.config.stampsize > 0 else min(nx, ny, self.config.maxstampsize)
+
+        # Create full image
+        full_image = Image.new(self.mode, (nx, ny))
+
+        print(f"\nCreating {self.mode} image...")
+
+        # Process in stamps
+        for y in range(0, ny, stamp_size):
+            y1 = min(y + stamp_size, ny)
+            for x in range(0, nx, stamp_size):
+                x1 = min(x + stamp_size, nx)
+
+                print(f"  Processing region ({x}, {y}) -> ({x1}, {y1})")
+
+                region = self._process_region(slice(y, y1), slice(x, x1))
+
+                # Paste into full image (flip vertically for astronomical convention)
+                full_image.paste(region, (x, ny - y1, x1, ny - y))
+
+        return full_image
+
+    def save(self, output_path: str | Path | None = None) -> Path:
+        """
+        Create and save the image.
+
+        Args:
+            output_path: Output file path. If None, uses config.outname
+
+        Returns:
+            Path to saved file
+        """
+        if output_path is None:
+            if self.config.outname is None:
+                raise ValueError("No output path specified")
+            output_path = self.config.outdir / f"{self.config.outname}.png"
         else:
-            print("Saving", outfile, "...")
-            imfull.save(outfile)
+            output_path = Path(output_path)
 
-        if self.show:
-            self.showimage(outfile, Image)
+        img = self.make_image()
 
-        return imfull
+        # Add legend if requested
+        if self.config.legend and self.mode == "RGB":
+            img = self._add_legend(img)
 
-    def makethumbnail1(self, outroot, width, fmt="jpg"):
-        nx = width
-        ny = 1000 * (nx / float(nx))
-        im = open(outroot + ".png")
-        im2 = im.resize((nx, ny))
-        im2.save(self.outname + "_%d.%s" % (width, fmt))
-        return im2
+        print(f"\nSaving to {output_path}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path)
 
-    def makethumbnail(self):
-        if self.thumbnail not in [None, "None"]:
-            outname = self.thumbnail
-            if outname[-4] == ".":
-                outname = outname[:-4]
-                fmt = outname[-3:]
-            width = int(outname)
-            self.makethumbnail1(self.outname, width, fmt)
+        return output_path
 
-    def showsample(self, outfile):
-        dx = dy = self.samplesize
-        if dx * dy == 0:
-            print(
-                "By setting samplesize = 0, you have asked to sample the entire image to determine the scalings."
-            )
-            print(
-                "(Note this will be clipped to a maximum of %dx%d.)"
-                % (self.maxstampsize, self.maxstampsize)
-            )
-            dx = dy = self.maxstampsize  # Maximum size possible
+    def _add_legend(self, img: Image.Image) -> Image.Image:
+        """Add filter legend to image."""
+        draw = ImageDraw.Draw(img)
 
-        ylo = np.clip(self.yc - dy / 2 + self.sampledy, 0, self.ny)
-        yhi = np.clip(self.yc + dy / 2 + self.sampledy, 0, self.ny)
-        xlo = np.clip(self.xc - dx / 2 + self.sampledx, 0, self.nx)
-        xhi = np.clip(self.xc + dx / 2 + self.sampledx, 0, self.nx)
-
-        dy = yhi - ylo
-        dx = xhi - xlo
-        print(
-            "Showing %dx%d core sample" % (dx, dy),
-        )
-        if self.sampledx or self.sampledy:
-            print(
-                "offset by (%d,%d)" % (self.sampledx, self.sampledy),
-            )
-
-        print("...")
-
-        limits = ylo, yhi, xlo, xhi
-        stampRGB = self.loadstamps(limits)
-        im = RGBscale2im(
-            stampRGB,
-            self.levdict,
-            self.noiselums,
-            self.colorsatfac,
-            self.mode,
-            self.invert,
-        )
-
-        outfile = join(self.outdir, outfile)
-
-        print("Creating test image", outfile)
-        im.save(outfile)
-
-        # Note: I use "open" instead of im.show()
-        # because the latter converts the image to a jpg for display
-        # which degrades it slightly
-        if self.show:
-            self.showimage(outfile, Image)
-
-        print("Like what you see?")
-        inp = input()
-
-    def addlegend(self, outfile=None, im=None):
-        if im == None:
-            outfile1 = join(self.outdir, self.outfile)
-            print("Adding legend to", outfile1, "...")
-            im = Image.open(outfile1)
-        else:
-            print("Adding legend...")
-
-        nx, ny = im.size
-        draw = ImageDraw.Draw(im)
-
-        x = 20
-        y0 = 20
+        x, y = 20, 20
         dy = 15
 
-        txt = loadfile(self.outfilterfile(), silent=1)
+        colors = {
+            "R": (255, 0, 0),
+            "G": (0, 255, 0),
+            "B": (0, 128, 255),
+        }
 
-        if self.mode == "L":
-            white = 255
-            line = txt[0][4:]  # get rid of leading "L = "
-            draw.text((x, y0), line, fill=white)
-        else:
-            blue = tuple(255 * np.array([0, 0.5, 1]))
-            green = tuple(255 * np.array([0, 1, 0]))
-            red = tuple(255 * np.array([1, 0, 0]))
+        for i, channel in enumerate(["B", "G", "R"]):
+            filters = " + ".join(self.filters[channel])
+            text = f"{channel} = {filters}"
+            draw.text((x, y + i * dy), text, fill=colors[channel])
 
-            colors = blue, green, red
-            colors = np.array(colors).astype(int)
+        return img
 
-            for i, line in enumerate(txt):
-                y = y0 + dy * i
-                ichannel = "BGR".index(line[0])
-                color = tuple(colors[ichannel])
-                draw.text((x, y), line, fill=color)
+    def run(self) -> Image.Image:
+        """
+        Convenience method that creates and returns the image.
 
-        if outfile == None:
-            outfile = join(self.outdir, self.outfile)
-
-        print("Saving", outfile, "...")
-        im.save(outfile)
-
-    def showimage(self, outfile, Image):
-        cmd = self.showwith
-        if (not cmd) or (cmd.upper() == "PIL"):
-            try:
-                Image.open(outfile).show()
-            except:
-                display(Image.open(outfile))
-
-        else:
-            try:
-                os.system(cmd + " " + outfile)
-            except:
-                # In case "open" doesn't work on their system (not a Mac)
-                # Although it may not work but not raise an error either!
-                # Should do better error handling here
-                Image.open(outfile).show()
-
-    def run(self):
-        self.setimages()  # not needed from command line
-        self.setoutfile()  # adds .png if necessary to outname
-        self.loadimagesize()
-
-        if "justaddlegend" in self.inkeys:
-            self.addlegend()
-            quit()
-
-        if self.noiselums == {}:
-            self.setnoiselums()
-        if self.scaling == None:
-            if self.noise and self.saturate:
-                self.determinescalings2()
-            else:
-                self.determinescalings()
-        else:
-            print("Loading scaling saved in", self.scaling)
-            self.levdict = loaddict(self.scaling)
-            scaleroot = os.path.basename(self.scaling)[:-4]
-            if self.testfirst:
-                self.showsample(self.outname + "_" + scaleroot + ".png")
-        print("Scalings:")
-        for channel in self.mode:
-            print(channel, self.levdict[channel])
-        self.makecolorimage()
-        self.makethumbnail()
-
-        # Clean up: Delete filter files
-        if self.deletefilters:
-            if exists(self.outfilterfile()):
-                os.remove(self.outfilterfile())
-
-
-if __name__ == "__main__":
-    if len(sys.argv) == 1:
-        infile = "trilogy.in"
-        images = None
-        Trilogy(infile, images=images, **params_cl()).run()
-    else:  # > 1
-        input1 = sys.argv[1]
-        if ("*" in input1) or ("?" in input1):
-            indir = params_cl().get("indir", "")
-            input1 = join(indir, input1)
-            images = glob(input1)
-            for image in images:
-                Trilogy(images=image, **params_cl()).run()
-        else:
-            images = None
-            if (
-                strend(input1, ".fits")
-                or strend(input1, ".fits.gz")
-                or strend(input1, ".fits.fz")
-            ):
-                images = input1
-                infile = None
-            else:
-                infile = input1
-
-            Trilogy(infile, images=images, **params_cl()).run()
+        Returns:
+            PIL Image
+        """
+        return self.make_image()
