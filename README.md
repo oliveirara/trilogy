@@ -2,7 +2,7 @@
 
 Modern Python library for converting astronomical FITS images into beautiful color or grayscale images.
 
-**Original author:** [Dan Coe](https://www.stsci.edu/~dcoe)  
+**Original author:** [Dan Coe](https://www.stsci.edu/~dcoe)
 **Modernized by:** [Renan Alves de Oliveira](https://github.com/oliveirara)
 
 <a href="https://ascl.net/1508.009"><img src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255" alt="ascl:1508.009" /></a>
@@ -17,13 +17,6 @@ Modern Python library for converting astronomical FITS images into beautiful col
 
 Try it! [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/oliveirara/trilogy/HEAD)
 
-## Features
-
-✨ **Easy to use** - Simple Python API for creating publication-quality images  
-🎨 **Beautiful results** - Uses Lupton's algorithm for optimal color scaling  
-🚀 **Modern & Fast** - Python 3.11+, type hints, optimized performance  
-🤖 **Smart defaults** - Auto-adjusts problematic parameters automatically  
-📓 **Notebook-friendly** - Works seamlessly in Jupyter notebooks  
 
 ## Installation
 
@@ -258,18 +251,6 @@ Trilogy uses **Lupton's algorithm** for astronomical image processing:
 2. **Logarithmic Scaling** - Maps wide dynamic range to 0-255
 3. **Color Saturation** - Adjustable color intensity for RGB images
 4. **Smart Defaults** - Automatically adjusts problematic parameters
-
-## What's New in v1.0
-
-🎉 **Complete rewrite** with modern Python
-
-- ✅ **Python 3.11+** - Type hints, dataclasses, pathlib
-- ✅ **No CLI** - Pure Python/notebook API
-- ✅ **Auto-adjustment** - Automatically fixes problematic parameters
-- ✅ **Performance** - Caching, optimized numpy operations
-- ✅ **Better errors** - Clear error messages and warnings
-- ✅ **Fully scriptable** - No interactive prompts
-- ✅ **Smart NaN handling** - Robust processing of images with NaN/Inf pixels
 
 ## Requirements
 
