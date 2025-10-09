@@ -1,8 +1,5 @@
 """
-Trilogy: Modern Python library for converting astronomical FITS images to color/grayscale images.
-
-Based on the original trilogy by Dan Coe, modernized and optimized.
-Uses Lupton's method for image scaling.
+Trilogy: Python library for converting astronomical FITS images to color/grayscale images.
 """
 
 from __future__ import annotations

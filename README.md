@@ -1,9 +1,6 @@
 # trilogy
 
-Modern Python library for converting astronomical FITS images into beautiful color or grayscale images.
-
-**Original author:** [Dan Coe](https://www.stsci.edu/~dcoe)
-**Modernized by:** [Renan Alves de Oliveira](https://github.com/oliveirara)
+Python library for converting astronomical FITS images into beautiful color or grayscale images.
 
 <a href="https://ascl.net/1508.009"><img src="https://img.shields.io/badge/ascl-1508.009-blue.svg?colorB=262255" alt="ascl:1508.009" /></a>
 
@@ -242,15 +239,6 @@ python example.py
 - Compressed FITS (`.fits.gz`, `.fits.fz`)
 - Multi-extension FITS (specify with `image.fits[1]`)
 - Automatic extension detection
-
-## Algorithm
-
-Trilogy uses **Lupton's algorithm** for astronomical image processing:
-
-1. **Robust Statistics** - Sigma clipping to measure mean and std dev
-2. **Logarithmic Scaling** - Maps wide dynamic range to 0-255
-3. **Color Saturation** - Adjustable color intensity for RGB images
-4. **Smart Defaults** - Automatically adjusts problematic parameters
 
 ## Requirements
 
